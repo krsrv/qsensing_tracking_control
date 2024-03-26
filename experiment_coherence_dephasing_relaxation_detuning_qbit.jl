@@ -21,17 +21,23 @@ dephasing_gamma = 0.5*((1/t2)-(1/(2*t1)));
 thermal_gamma = 1 / t1;
 
 @enum SimulationType begin
-   ramsey_detuned = 1
-   ideal = 2
-   detuned = 3
+	# For detuning experiments, the static field is assumed to be (detuning_freq)/2 * σz
+	# in linear frequency units.
+	ramsey_interferometry = 1
+	ideal_tracking_control = 2
+	detuned_tracking_control = 3
 end;
 
 # Arguments
-if length(ARGS) == 0
+ignore_argument = true;
+if !ignore_argument && length(ARGS) == 0
 	print("Needs detuning frequency as argument\n");
 	exit();
+elseif !ignore_argument && length(ARGS) > 0
+	detuning_freq = parse(Float64, ARGS[1]);
+else
+	detuning_freq = 1/(2*t2);
 end
-detuning_freq = parse(Float64, ARGS[1]);
 
 # Sampling rate is 2.4 giga samples per sec
 sampling_rate = 2.4 * 1e9;
@@ -62,12 +68,14 @@ end
 
 function dissipator(v)
 	dephasing_dissipator = -2 * dephasing_gamma * [v[1], v[2], 0];
-	relaxation_coefficient = 1 # get_relaxation_coeff(bath_temp, qbit_freq);
+	assume_pure_relaxation = true;
+	relaxation_coefficient = assume_pure_relaxation ? 1 : get_relaxation_coeff(bath_temp, qbit_freq);
 	thermal_dissipator = thermal_gamma * (-relaxation_coefficient * [v[1]/2, v[2]/2, v[3]-1] - (1-relaxation_coefficient) * [v[1]/2, v[2]/2, v[3]+1]);
 	return dephasing_dissipator + thermal_dissipator;
 end
 
 function target(v)
+	# Coherence magnitude = vx^2+vy^2;
 	return v[1]^2 + v[2]^2;
 end
 
@@ -76,22 +84,34 @@ function grad(v)
 end
 
 function get_hamiltonian(v,p,t)
-	if p[1] == ramsey_detuned::SimulationType
-		return [0,0,detuning_freq/2 * 2 * pi];
-	elseif p[1] == ideal::SimulationType
+	# For conversion from Hamiltonian in Pauli basis to vectors, we assume
+	# H = hx σx + hy σy + hz σz. This gives vec(h) = (hx, hy, hz). The resulting
+	# differential equation is dv/dt = 2 h x v. Note that the detuning Hamiltonian
+	# is detuning_freq/2 in linear frequency units.
+	detuning_hamiltonian = [0,0,detuning_freq/2 * 2 * pi];
+	# dephasing_hamiltonian(x) = -dephasing_gamma / x[3] * [x[2], -x[1], 0];
+	# thermal_hamiltonian(x) = -thermal_gamma / (4 * x[3]) * [x[2], -x[1], 0];
+	if p[1] == ramsey_interferometry::SimulationType
+		return detuning_hamiltonian;
+	elseif p[1] == ideal_tracking_control::SimulationType
 		dephasing_hamiltonian = -dephasing_gamma / v[3] * [v[2], -v[1], 0];
 		thermal_hamiltonian = -thermal_gamma / (4 * v[3]) * [v[2], -v[1], 0];
 		return dephasing_hamiltonian + thermal_hamiltonian;
-	elseif p[1] == detuned::SimulationType
+	elseif p[1] == detuned_tracking_control::SimulationType
+		# Use the ideal case hamiltonian at time t to apply here. The
+		# ideal case hamiltonian is a function of the state in ideal case at time t.
+		if t > p[2].t[end]*0.9
+			return detuning_hamiltonian;
+		end
 		buff_v = p[2](t);
-		dephasing_hamiltonian = -2*dephasing_gamma / buff_v[3] * [buff_v[2], -buff_v[1], 0];
+		dephasing_hamiltonian = -dephasing_gamma / buff_v[3] * [buff_v[2], -buff_v[1], 0];
 		thermal_hamiltonian = -thermal_gamma / (4 * buff_v[3]) * [buff_v[2], -buff_v[1], 0];
-		return dephasing_hamiltonian + thermal_hamiltonian + [0,0,detuning_freq/2 * 2 * pi];
+		return dephasing_hamiltonian + thermal_hamiltonian + detuning_hamiltonian;
 	end
 	throw(Error("Undefined control sequence in get_hamiltonian: unexpected value of SimulationType"))
 end
 
-# Parameters (tuple):
+# Parameters p (tuple):
 # 1. First element - is_ramsey_setup
 # 2. Second element - ideal solution
 function lindblad(v, p, t)
@@ -103,12 +123,8 @@ function lindblad(v, p, t)
 end
 
 function get_hamiltonian_matrix(u, t, int)
-	h_vec = get_hamiltonian(u, (ideal::SimulationType, nothing), 0)
+	h_vec = get_hamiltonian(u, (ideal_tracking_control::SimulationType, nothing), 0)
 	return h_vec[1] * F4[2] + h_vec[2] * F4[3] + h_vec[3] * F4[4]
-end
-
-function save_target(u, t, int)
-	return target(u)
 end
 
 function integral(solution)
@@ -118,57 +134,66 @@ function integral(solution)
 end
 
 is_ramsey_setup = false;
-simulation_type = ideal::SimulationType;
-# v = [1/sqrt(2),0,1/sqrt(2)]
-# v = [0.41,0,0.7]
+simulation_type = ideal_tracking_control::SimulationType;
 if !is_ramsey_setup
-	x = 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma))-0.01
-	# x = 0.3;
+	x = 0.9;#0.5*sqrt(t2/t1);
 	v = [x,0,sqrt(1-x^2)];
-	# v=v/2;
 else
-	simulation_type = ramsey_detuned::SimulationType;
+	simulation_type = ramsey_interferometry::SimulationType;
 	v = [1,0,0]
 end
-abstol, reltol = 1e-8,1e-6;
-tend = 30*t2;
+tend = 6*t2;
 
-problem = ODEProblem(lindblad, v, (0.0, tend), (simulation_type, nothing));
-ideal_solution = solve(problem, alg_hints=[:stiff], abstol=abstol, reltol=reltol);
+function solve_wrapper(starting_state, time_end, simulation_type, past_solution)
+	verbose = true;
+	if verbose
+		print("Starting simulation for: $(simulation_type)\n")
+		print("Initial state: $(starting_state)\n");
+		print("T1, T2: $(round(t1*1e6))us, $(round(t2*1e6))us\n");
+		print("Detuning frequency: $(round(detuning_freq)) Hz\n");
+		print("\n");
+	end
+	abstol, reltol = 1e-8,1e-6;
+	problem = ODEProblem(lindblad, starting_state, (0.0, time_end), (simulation_type, past_solution));
+	solution = solve(problem, alg_hints=[:stiff], abstol=abstol, reltol=reltol);
+	return solution
+end
 
-using JLD2;
-# @save "ideal_solution.jld2" ideal_solution
-# print("Initial state: ", v, "\n");
-# print("T1, T2: ", t1, ", ", t2, "\n");
-# print("Simulation time for ideal solution: ", ideal_solution.t[end], "\n");
-# print("Is ramsey? ", is_ramsey_setup, "\n");
-# z = ideal_solution.u[end][3]
+ideal_solution = solve_wrapper(v, tend, ideal_tracking_control::SimulationType, nothing);
+detuned_solution = solve_wrapper(v, tend, detuned_tracking_control::SimulationType, ideal_solution);
+
+ramsey_solution = solve_wrapper([1,0,0], tend, ramsey_interferometry::SimulationType, nothing);
+
 using Plots;
 plotly();
-plot(ideal_solution, size=(1500,800), show=true, title="T1=$(t1*10^6)us, T2=$(t2*10^6)us, Ideal", label=["vx ideal" "vy ideal" "vz ideal"]);
-# plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
-# plot(ideal_solution.t, [[get_hamiltonian(u)[1] for u in ideal_solution.u], [get_hamiltonian(u)[2] for u in ideal_solution.u], [get_hamiltonian(u)[3] for u in ideal_solution.u]], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
 
-problem = ODEProblem(lindblad, v, (0.0, tend), (detuned::SimulationType, ideal_solution));
-detuned_solution = solve(problem, alg_hints=[:stiff], abstol=abstol, reltol=reltol);
+plot(ideal_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal", label=["vx ideal" "vy ideal" "vz ideal"]);
+# plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
+plot(ideal_solution.t,
+	[[get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[1] for u in ideal_solution.u],
+	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[2] for u in ideal_solution.u],
+	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[3] for u in ideal_solution.u]
+	], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
+
+plot(detuned_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
+# plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
+
+plot(ramsey_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
+
+# print("Ideal solution - area under v_y: ", integral(ideal_solution), "\n")
+# print("Detuned solution - area under v_y: ", integral(detuned_solution), "\n")
+
+# detuned_vy=[abs(detuned_solution.u[i][2]) for i in range(1,length(detuned_solution))];
+# ramsey_vy=[abs(ramsey_solution.u[i][2]) for i in range(1,length(ramsey_solution))];
+# print("v_y max in detuned solution: ", maximum(vy), "\n");
+# print(detuned_vy[end], "\t", ideal_solution.u[end][3], "\n");
+# print("$(detuning_freq),$(maximum(detuned_vy)),$(maximum(ramsey_vy)),$(detuned_vy[end]),$(ramsey_vy[end])\n");
+
+# using JLD2;
+# @save "ideal_solution.jld2" ideal_solution
 # @save "detuned_solution.jld2" detuned_solution
 # detuned_hamiltonian = [[get_hamiltonian(u)[1] for u in ideal_solution.u], [get_hamiltonian(u)[2] for u in ideal_solution.u], [get_hamiltonian(u)[3] for u in ideal_solution.u]]
 
-plot(detuned_solution, size=(1500,800), show=true, title="T1=$(t1*10^6)us, T2=$(t2*10^6)us, Detuning-$(detuning_freq)Hz (CM)", label=["vx" "vy" "vz"]);
-# plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
-# print("Ideal solution - area under v_y: ", integral(ideal_solution), "\n")
-# print("Detuned solution - area under v_y: ", integral(detuned_solution), "\n")
-# detuned_vy=[abs(detuned_solution.u[i][2]) for i in range(1,length(detuned_solution))];
-# print("v_y max in detuned solution: ", maximum(vy), "\n");
-# print(detuned_vy[end], "\t", ideal_solution.u[end][3], "\n");
-
-
-# is_ramsey_setup = true
-# problem = ODEProblem(lindblad, [1,0,0], (0.0, tend));
-# ramsey_solution = solve(problem, alg_hints=[:stiff], abstol=abstol, reltol=reltol);
-# ramsey_vy=[abs(ramsey_solution.u[i][2]) for i in range(1,length(ramsey_solution))];
-# plot(ramsey_solution, size=(1500,800), title="T1=$(t1*10^6)us, T2=$(t2*10^6)us, Ramsey", show=true, label=["vx" "vy" "vz"]);
-# print("$(detuning_freq),$(maximum(detuned_vy)),$(maximum(ramsey_vy)),$(detuned_vy[end]),$(ramsey_vy[end])\n");
 
 
 
