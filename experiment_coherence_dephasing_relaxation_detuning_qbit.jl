@@ -22,7 +22,8 @@ thermal_gamma = 1 / t1;
 
 @enum SimulationType begin
 	# For detuning experiments, the static field is assumed to be (detuning_freq)/2 * σz
-	# in linear frequency units.
+	# in linear frequency units. With no dissipation and external control, this is
+	# expected to give oscillations with time period (1/detuning_freq).
 	ramsey_interferometry = 1
 	ideal_tracking_control = 2
 	detuned_tracking_control = 3
@@ -161,7 +162,6 @@ end
 
 ideal_solution = solve_wrapper(v, tend, ideal_tracking_control::SimulationType, nothing);
 detuned_solution = solve_wrapper(v, tend, detuned_tracking_control::SimulationType, ideal_solution);
-
 ramsey_solution = solve_wrapper([1,0,0], tend, ramsey_interferometry::SimulationType, nothing);
 
 using Plots;
@@ -169,11 +169,11 @@ plotly();
 
 plot(ideal_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal", label=["vx ideal" "vy ideal" "vz ideal"]);
 # plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
-plot(ideal_solution.t,
-	[[get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[1] for u in ideal_solution.u],
-	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[2] for u in ideal_solution.u],
-	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[3] for u in ideal_solution.u]
-	], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
+# plot(ideal_solution.t,
+# 	[[get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[1] for u in ideal_solution.u],
+# 	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[2] for u in ideal_solution.u],
+# 	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[3] for u in ideal_solution.u]
+# 	], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
 
 plot(detuned_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
 # plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
