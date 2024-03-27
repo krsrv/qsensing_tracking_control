@@ -1,6 +1,7 @@
 using DifferentialEquations;
 using LinearAlgebra;
 
+# This program runs a parameter sweep for coherence preservation enhanced quantum sensing.
 # The setup for the experiment is:
 # 1. Z-axis dephasing
 # 2. Pure relaxation, i.e. relaxation to ground state
@@ -11,17 +12,6 @@ using LinearAlgebra;
 # Experiment setup
 h = 6.62607015 * 1e-34; # Planck's constant - Joule per Hertz
 kb = 1.380649 * 1e-23; # Boltzmann's constant - Joule per Kelvin
-
-# 1/t2 = 1/(2t1) + 1/t_phi.
-# t_phi - corresponds to dephasing. Equal to 1/gamma
-# t1 - corresponds to thermal relaxation.
-# t1 = nothing;
-# t2 = nothing;
-# dephasing_gamma = nothing;
-# thermal_gamma = nothing;
-
-# Arguments
-# detuning_freq = nothing;
 
 # Sampling rate is 2.4 giga samples per sec
 sampling_rate = 2.4 * 1e9;
@@ -62,14 +52,16 @@ function get_relaxation_coeff(temp, qbit_freq)
 	return 1/(1+exp(-βH))
 end
 
-function dissipator(v,p)
+function dissipator(v)
 	dephasing_dissipator = -2 * p[DEPHASING_GAMMA] * [v[1], v[2], 0];
-	relaxation_coefficient = 1 # get_relaxation_coeff(bath_temp, qbit_freq);
+	assume_pure_relaxation = true;
+	relaxation_coefficient = assume_pure_relaxation ? 1 : get_relaxation_coeff(bath_temp, qbit_freq);
 	thermal_dissipator = p[THERMAL_GAMMA] * (-relaxation_coefficient * [v[1]/2, v[2]/2, v[3]-1] - (1-relaxation_coefficient) * [v[1]/2, v[2]/2, v[3]+1]);
 	return dephasing_dissipator + thermal_dissipator;
 end
 
 function target(v)
+	# Coherence magnitude = vx^2+vy^2;
 	return v[1]^2 + v[2]^2;
 end
 
@@ -78,35 +70,42 @@ function grad(v)
 end
 
 function get_hamiltonian(v,p,t)
-	if p[SIMULATION_TYPE] == ramsey_detuned::SimulationType
-		return [0,0,p[DETUNING_FREQ]/2 * 2 * pi];
-	elseif p[SIMULATION_TYPE] == ideal::SimulationType
+	# For conversion from Hamiltonian in Pauli basis to vectors, we assume
+	# H = hx σx + hy σy + hz σz. This gives vec(h) = (hx, hy, hz). The resulting
+	# differential equation is dv/dt = 2 h x v. Note that the detuning Hamiltonian
+	# is detuning_freq/2 in linear frequency units.
+	detuning_hamiltonian = [0,0,p[DETUNING_FREQ]/2 * 2 * pi];
+	# dephasing_hamiltonian(x) = -dephasing_gamma / x[3] * [x[2], -x[1], 0];
+	# thermal_hamiltonian(x) = -thermal_gamma / (4 * x[3]) * [x[2], -x[1], 0];
+	if p[SIMULATION_TYPE] == ramsey_interferometry::SimulationType
+		return detuning_hamiltonian;
+	elseif p[SIMULATION_TYPE] == ideal_tracking_control::SimulationType
 		dephasing_hamiltonian = -p[DEPHASING_GAMMA] / v[3] * [v[2], -v[1], 0];
 		thermal_hamiltonian = -p[THERMAL_GAMMA] / (4 * v[3]) * [v[2], -v[1], 0];
-		return dephasing_hamiltonian + thermal_hamiltonian
-	elseif p[SIMULATION_TYPE] == detuned::SimulationType
-		if p[IDEAL_TRAJECTORY] == nothing
-			throw(Error("Ideal solution missing for detuned simulation"));
+		return dephasing_hamiltonian + thermal_hamiltonian;
+	elseif p[SIMULATION_TYPE] == detuned_tracking_control::SimulationType
+		# Use the ideal case hamiltonian at time t to apply here. The
+		# ideal case hamiltonian is a function of the state in ideal case at time t.
+		if t > p[IDEAL_TRAJECTORY].t[end]*0.9
+			return detuning_hamiltonian;
 		end
-		buff_p = (
-			ideal::SimulationType, # simulation type
-			0,
-			p[DEPHASING_GAMMA],
-			p[THERMAL_GAMMA],
-			nothing, # ideal solution/trajectory data
-		);
-		return get_hamiltonian(p[IDEAL_TRAJECTORY](t), buff_p, t) + [0,0,p[DETUNING_FREQ]/2 * 2 * pi];
-	else
-		throw(Error("Undefined control flow - Simulation type does not match one of ramsey, ideal or detuned"));
+		buff_v = p[IDEAL_TRAJECTORY](t);
+		dephasing_hamiltonian = -p[DEPHASING_GAMMA] / buff_v[3] * [buff_v[2], -buff_v[1], 0];
+		thermal_hamiltonian = -p[THERMAL_GAMMA] / (4 * buff_v[3]) * [buff_v[2], -buff_v[1], 0];
+		return dephasing_hamiltonian + thermal_hamiltonian + detuning_hamiltonian;
 	end
+	throw(Error("Undefined control sequence in get_hamiltonian: unexpected value of SimulationType"))
 end
 
+f# Parameters p (tuple):
+# 1. First element - is_ramsey_setup
+# 2. Second element - ideal solution
 function lindblad(v, p, t)
 	hamiltonian = get_hamiltonian(v,p,t);
 	if any(isnan, hamiltonian)
 		return [Inf, Inf, Inf]
 	end
-	return 2 * cross(hamiltonian, v) + dissipator(v, p)
+	return 2 * cross(hamiltonian, v) + dissipator(v)
 end
 
 # Parameters
@@ -147,12 +146,14 @@ end
 			continue
 		end
 		thermal_gamma = 1 / t1;
-		# vx_maximum is supposed to be 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)), which is the same as 0.5*sqrt(t2:t1)
-		vx_maximum = 0.98;#minimum((1,0.5*sqrt(t2us/t1us)))-0.0001;
+		# vx_maximum for stable regions is supposed to be
+		# 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)),
+		# which is the same as 0.5*sqrt(t2:t1)
+		vx_maximum = 0.98; # minimum((1,0.5*sqrt(t2us/t1us)))-0.0001;
 		vx_minimum = 0.5*sqrt(t2/t1)+0.01; #maximum((0.1,vx_maximum-floor(10*vx_maximum)/10));
 		for detune_ratio in param_space["detune_ratio"]
 			detuning_freq = detune_ratio/t2;
-			tend = 30*t2;
+			tend = 10*t2;
 			# Ramsey interference setup
 			simulation_params = (
 				ramsey_detuned::SimulationType, # simulation type
@@ -162,15 +163,15 @@ end
 				nothing, # ideal solution/trajectory data
 			);
 			problem = ODEProblem(lindblad, [1,0,0], (0.0, tend), simulation_params);
-			# For some reason, problem with sampling rate
+			# For some reason, there's a problem with sampling rate
 			ramsey_solution = solve(problem, alg_hints=[:stiff], saveat=sampling, abstol=abstol, reltol=reltol);
 			ramsey_vy=[abs(ramsey_solution.u[i][2]) for i in range(1,length(ramsey_solution))];
 
 			for buff_vx in range(vx_maximum,vx_minimum,step=-0.01)
-				vx = buff_vx; #/2
+				vx = buff_vx;
 				vz = sqrt(1-vx^2);
 				# Ideal coherence magnitude preserving control
-				v = [vx,0,vz]; # Checking vx/2
+				v = [vx,0,vz];
 				simulation_params = (
 					ideal::SimulationType, # simulation type
 					detuning_freq,
@@ -199,30 +200,21 @@ end
 				delta_for_end = detuned_vy[end] - ramsey_vy[end];
 				nruns_for_end = (1-detuned_vy[end]^2)/(4*delta_for_end^2);
 				
-				stable_h_ideal = get_hamiltonian(ideal_solution.u[end],(ideal::SimulationType,detuning_freq,dephasing_gamma,thermal_gamma,ideal_solution),ideal_solution.t[end]);
-				stable_z_ideal = ideal_solution.u[end][3];
-				# lind_end = lindblad(ideal_solution.u[end],(ideal::SimulationType,detuning_freq,dephasing_gamma,thermal_gamma,ideal_solution),ideal_solution.t[end])[3];
 				alpha = vx^2*t1/t2-1/4;
 				predicted = -t1*( 0.5*log((0.25+alpha)/((vz-0.5)^2+alpha)) + 1/(2*sqrt(alpha)) * (atan(-0.5/sqrt(alpha))-atan((vz-0.5)/sqrt(alpha))));
-				print("$(vx), $(ideal_solution.t[end]), $(predicted)\n")
 				output = "";
-				output = output * "$(t1)";
-				output = output * ",$(t2)";
-				output = output * ",$(detune_ratio)";
-				output = output * ",$(vx)";
-				output = output * ",$(stable_z_ideal)";
-				output = output * ",$(stable_h_ideal[2])";
-				# output = output * ",$(lind_end)";
-				output = output * ",$(detuned_solution.t[detuned_vy_max_index])";
-				output = output * ",$(maximum(detuned_vy))";
-				output = output * ",$(maximum(ramsey_vy))";
-				output = output * ",$(nruns_for_max)";
+				output = output * "$(t1)"; # T1
+				output = output * ",$(t2)"; # T2
+				output = output * ",$(detune_ratio)"; # Detuning freq * T2
+				output = output * ",$(vx)"; # Starting state
+				output = output * ",$(ideal_solution.t[end])"; # Breakdown time/max simulation time
+				output = output * ",$(maximum(detuned_vy))"; # Max vy - coherence magnitude
+				output = output * ",$(detuned_solution.t[detuned_vy_max_index])"; # Time for max vy
+				output = output * ",$(maximum(ramsey_vy))"; # Max vy - ramsey
 				# output = output * ",$(detuned_solution.t[argmax(detuned_vy)])";
 				# output = output * ",$(ramsey_solution.t[argmax(ramsey_vy)])";
-				output = output * ",$(detuned_vy[end])";
-				output = output * ",$(ramsey_vy[end])";
-				output = output * ",$(nruns_for_end)";
-				output = output * ",$(detuned_solution.t[end]/tend)";
+				output = output * ",$(detuned_vy[end])"; # vy end - coherence magnitude
+				output = output * ",$(ramsey_vy[end])"; # vy end - ramsey
 				# print("$(output)\n");
 			end
 		end
