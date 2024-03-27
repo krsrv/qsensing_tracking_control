@@ -110,20 +110,20 @@ function lindblad(v, p, t)
 end
 
 # Parameters
-trial_run = false;
+trial_run = true;
 fine_sampling = false;
 extra_precision = true;
 
 param_space = Dict(
 		"t1" => range(10,200,step=10), # remember to convert to microseconds
 		"t2" => range(10,400,step=10), # remember to convert to microseconds
-		"detune_index" => range(1,4,step=0.3)
+		"detune_ratio" => append!(collect(range(1/10,1/2,length=30)), 1 ./ collect(range(10,100,length=30)))
 	);
 if trial_run
 	param_space = Dict(
-		"t1" => range(50,60,step=10), # remember to convert to microseconds
-		"t2" => range(50,50,step=10), # remember to convert to microseconds
-		"detune_index" => range(1,4,step=0.3)
+		"t1" => range(50,50,step=10), # remember to convert to microseconds
+		"t2" => range(50,60,step=10), # remember to convert to microseconds
+		"detune_ratio" => [0],#append!(collect(range(1/10,1/2,length=30)), 1 ./ collect(range(10,100,length=30)))#range(1/20,1/2,length=5)
 	);
 end
 
@@ -134,22 +134,24 @@ end
 
 abstol, reltol = 1e-6, 1e-3;
 if extra_precision
-	abstol, reltol = 1e-8,1e-6;
+	abstol, reltol = 1e-8,1e-10;
 end
 
+# print("t1,t2,detuning_t2,vx,sim_z,sim_h,cm_vy_time,cm_vy_max,ramsey_vy_max,nruns_max,cm_vy_end,ramsey_vy_end,nruns_end,sim_ratio\n");
 @time for t1us in param_space["t1"]
 	t1 = t1us * 10^-6;
 	for t2us in param_space["t2"]
 		t2 = t2us * 10^-6;
-		dephasing_gamma = ((1/t2)-(1/(2*t1)));
+		dephasing_gamma = 0.5*((1/t2)-(1/(2*t1)));
 		if dephasing_gamma < 0
 			continue
 		end
 		thermal_gamma = 1 / t1;
-		vx_maximum = minimum((1,0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma))-0.01));
-		vx_minimum = maximum((0.1,vx_maximum-floor(10*vx_maximum)/10));
-		for detune_index in param_space["detune_index"]
-			detuning_freq = 10^detune_index;
+		# vx_maximum is supposed to be 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)), which is the same as 0.5*sqrt(t2:t1)
+		vx_maximum = 0.98;#minimum((1,0.5*sqrt(t2us/t1us)))-0.0001;
+		vx_minimum = 0.5*sqrt(t2/t1)+0.01; #maximum((0.1,vx_maximum-floor(10*vx_maximum)/10));
+		for detune_ratio in param_space["detune_ratio"]
+			detuning_freq = detune_ratio/t2;
 			tend = 30*t2;
 			# Ramsey interference setup
 			simulation_params = (
@@ -164,10 +166,11 @@ end
 			ramsey_solution = solve(problem, alg_hints=[:stiff], saveat=sampling, abstol=abstol, reltol=reltol);
 			ramsey_vy=[abs(ramsey_solution.u[i][2]) for i in range(1,length(ramsey_solution))];
 
-			for buff_vx in range(vx_maximum,vx_maximum,step=-0.1)
-				vx = buff_vx/2;
+			for buff_vx in range(vx_maximum,vx_minimum,step=-0.01)
+				vx = buff_vx; #/2
+				vz = sqrt(1-vx^2);
 				# Ideal coherence magnitude preserving control
-				v = [vx,0,sqrt(1-vx^2)]; # Checking vx/2
+				v = [vx,0,vz]; # Checking vx/2
 				simulation_params = (
 					ideal::SimulationType, # simulation type
 					detuning_freq,
@@ -186,18 +189,45 @@ end
 					thermal_gamma,
 					ideal_solution, # ideal solution/trajectory data
 				);
-				problem = ODEProblem(lindblad, v, (0.0, tend), simulation_params);
+				problem = ODEProblem(lindblad, v, (0.0, ideal_solution.t[end]), simulation_params);
 				detuned_solution = solve(problem, alg_hints=[:stiff], saveat=sampling, abstol=abstol, reltol=reltol);
-				detuned_vy=[abs(detuned_solution.u[i][2]) for i in range(1,length(detuned_solution))];
+				
+				detuned_vy = [abs(detuned_solution.u[i][2]) for i in range(1,length(detuned_solution))];
+				detuned_vy_max_index = argmax(detuned_vy);
+				delta_for_max = maximum(detuned_vy) - maximum(ramsey_vy);
+				nruns_for_max = (1-maximum(detuned_vy)^2)/(4*delta_for_max^2);
+				delta_for_end = detuned_vy[end] - ramsey_vy[end];
+				nruns_for_end = (1-detuned_vy[end]^2)/(4*delta_for_end^2);
+				
 				stable_h_ideal = get_hamiltonian(ideal_solution.u[end],(ideal::SimulationType,detuning_freq,dephasing_gamma,thermal_gamma,ideal_solution),ideal_solution.t[end]);
 				stable_z_ideal = ideal_solution.u[end][3];
-				lind_end = lindblad(ideal_solution.u[end],(ideal::SimulationType,detuning_freq,dephasing_gamma,thermal_gamma,ideal_solution),ideal_solution.t[end])[3];
-				print("$(t1),$(t2),$(detuning_freq),$(vx),$(stable_z_ideal),$(stable_h_ideal[2]),$(lind_end),$(maximum(detuned_vy)),$(maximum(ramsey_vy)),$(detuned_solution.t[argmax(detuned_vy)]),$(ramsey_solution.t[argmax(ramsey_vy)]),$(detuned_vy[end]),$(ramsey_vy[end]),$(detuned_solution.t[end]/tend)\n");
+				# lind_end = lindblad(ideal_solution.u[end],(ideal::SimulationType,detuning_freq,dephasing_gamma,thermal_gamma,ideal_solution),ideal_solution.t[end])[3];
+				alpha = vx^2*t1/t2-1/4;
+				predicted = -t1*( 0.5*log((0.25+alpha)/((vz-0.5)^2+alpha)) + 1/(2*sqrt(alpha)) * (atan(-0.5/sqrt(alpha))-atan((vz-0.5)/sqrt(alpha))));
+				print("$(vx), $(ideal_solution.t[end]), $(predicted)\n")
+				output = "";
+				output = output * "$(t1)";
+				output = output * ",$(t2)";
+				output = output * ",$(detune_ratio)";
+				output = output * ",$(vx)";
+				output = output * ",$(stable_z_ideal)";
+				output = output * ",$(stable_h_ideal[2])";
+				# output = output * ",$(lind_end)";
+				output = output * ",$(detuned_solution.t[detuned_vy_max_index])";
+				output = output * ",$(maximum(detuned_vy))";
+				output = output * ",$(maximum(ramsey_vy))";
+				output = output * ",$(nruns_for_max)";
+				# output = output * ",$(detuned_solution.t[argmax(detuned_vy)])";
+				# output = output * ",$(ramsey_solution.t[argmax(ramsey_vy)])";
+				output = output * ",$(detuned_vy[end])";
+				output = output * ",$(ramsey_vy[end])";
+				output = output * ",$(nruns_for_end)";
+				output = output * ",$(detuned_solution.t[end]/tend)";
+				# print("$(output)\n");
 			end
 		end
 	end
 end
-
 
 
 

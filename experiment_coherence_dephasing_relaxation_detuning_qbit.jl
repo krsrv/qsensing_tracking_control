@@ -167,7 +167,10 @@ ramsey_solution = solve_wrapper([1,0,0], tend, ramsey_interferometry::Simulation
 using Plots;
 plotly();
 
-plot(ideal_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal", label=["vx ideal" "vy ideal" "vz ideal"]);
+# Graph attributes
+linewidth = 3;
+size = (1500,800);
+plot(ideal_solution, size=size, linewidth=linewidth, show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal", label=["vx ideal" "vy ideal" "vz ideal"]);
 # plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
 # plot(ideal_solution.t,
 # 	[[get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[1] for u in ideal_solution.u],
@@ -175,10 +178,10 @@ plot(ideal_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T
 # 	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[3] for u in ideal_solution.u]
 # 	], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
 
-plot(detuned_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
+plot(detuned_solution, size=size, linewidth=linewidth, show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
 # plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
 
-plot(ramsey_solution, size=(1500,800), show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
+plot(ramsey_solution, size=size, linewidth=linewidth, show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
 
 # print("Ideal solution - area under v_y: ", integral(ideal_solution), "\n")
 # print("Detuned solution - area under v_y: ", integral(detuned_solution), "\n")
