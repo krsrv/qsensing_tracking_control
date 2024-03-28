@@ -142,49 +142,42 @@ end
 using NLopt, ForwardDiff;
 
 # Find the max vy using the solution to the differential equation.
-function max_vy_objective(x::Vector, grad::Vector, diffEqSolution)
+function max_vy_objective(t::Vector, grad::Vector, diffEqSolution)
 	if length(grad) > 0
-    # use ForwardDiff for the gradient for vy
-    grad[1] = ForwardDiff.derivative((x)->diffEqSolution(first(x), idxs=2), x)
-  end
-  diffEqSolution(first(x), idxs=2)	
+   	# use ForwardDiff for the gradient for vy.
+   	# using first(t) is supposed to be faster than t[1]
+   	grad[1] = ForwardDiff.derivative((t)->diffEqSolution(first(t), idxs=2), first(t))
+ 	end
+ 	diffEqSolution(first(t), idxs=2)
 end
 
-# Find the time to be less than the total simulation time for the differential equation solution.
-function t_constraint(x::Vector, grad::Vector, diffEqSolution)
-    if length(grad) > 0
-        grad[1] = 1
-    end
-    x[1]-diffEqSolution.t[end]
-end
-
+# Find the maximum vy achieved in the differential equation solutions.
 function get_max_vy(detuned_solution, ideal_solution, ramsey_solution)
-	opt = NLopt.Opt(:GN_ORIG_DIRECT_L, 1);
-	NLopt.lower_bounds!(opt, [0.0]);
-	NLopt.upper_bounds!(opt, [1.0]);
-	NLopt.max_objective!(opt, (x,g)->max_vy_objective(x,g,detuned_solution));
-	NLopt.inequality_constraint!(opt, (x,g) -> t_constraint(x,g,detuned_solution), 1e-8);
-	(max_vy,argmax_t,ret) = NLopt.optimize(opt,[0.5]);
+	# This is a crude estimate - the solution has interpolations and take maximum values
+	# away from this point.
+	crude_argmax_vy = get_crude_estimate_for_max(detuned_solution);
+	
+	# Get global maximum by improving upon the crude estimate.
+	# Method - local maximisation around the crude estimate.
+	opt = NLopt.Opt(:LD_MMA, 1); # Local derivative based MMA approach, only 1 optimisation variable.
+	opt.lower_bounds = [detuned_solution.t[crude_argmax_vy] - 1e-4]; # lower bound on t
+	opt.upper_bounds = [detuned_solution.t[crude_argmax_vy] + 1e-4]; # upper bound on t
+	opt.xtol_rel = 1e-6; # Relative tolerance for t
+	opt.max_objective = (x,g) -> max_vy_objective(x,g,detuned_solution);
+	(max_vy,argmax_t,ret) = NLopt.optimize(opt, [detuned_solution.t[crude_argmax_vy]]); # best initial guess for t
 
-	# Now find maximum vy for t < Breakdown
-	opt = NLopt.Opt(:GN_ORIG_DIRECT_L, 1);
-	NLopt.lower_bounds!(opt, [0.0]);
-	NLopt.upper_bounds!(opt, [1.0]);
-	# NLopt.xtol_rel!(opt); # ,1e-8
-	NLopt.max_objective!(opt, (x,g)->max_vy_objective(x,g,detuned_solution));
-	NLopt.inequality_constraint!(opt, (x,g) -> t_constraint(x,g,ideal_solution), 1e-8);
-	(max_vy_b,argmax_t_b,ret) = NLopt.optimize(opt,[0.5]);
+	# Repeat the step for max vy before breakdown. Not important right now.
+	
+	# Repeat the step for max vy in Ramsey interferometry. This is easily analytically calculable.
+	crude_argmax_vy = get_crude_estimate_for_max(ramsey_solution);
+	opt = NLopt.Opt(:LD_MMA, 1);
+	opt.lower_bounds = [detuned_solution.t[crude_argmax_vy] - 1e-4]; # lower bound on t
+	opt.upper_bounds = [detuned_solution.t[crude_argmax_vy] + 1e-4]; # upper bound on t
+	opt.xtol_rel = 1e-6; # Relative tolerance for t
+	opt.max_objective = (x,g) -> max_vy_objective(x,g,ramsey_solution);
+	(max_vy_r,argmax_t_r,ret) = NLopt.optimize(opt, [ramsey_solution.t[crude_argmax_vy]]); # best initial guess for t
 
-	# Now find maximum vy for ramsey interferometry
-	opt = NLopt.Opt(:GN_ORIG_DIRECT_L, 1);
-	NLopt.lower_bounds!(opt, [0.0]);
-	NLopt.upper_bounds!(opt, [1.0]);
-	# NLopt.xtol_rel!(opt); # ,1e-8
-	NLopt.max_objective!(opt, (x,g)->max_vy_objective(x,g,ramsey_solution));
-	NLopt.inequality_constraint!(opt, (x,g) -> t_constraint(x,g,ramsey_solution), 1e-8);
-	(max_vy_r,argmax_t_r,ret) = NLopt.optimize(opt,[0.5]);
-
-	return (max_vy, argmax_t, max_vy_b, argmax_t_b, max_vy_r, argmax_t_r);
+	return (max_vy, argmax_t[1], max_vy_r, argmax_t_r[1]);
 end
 
 header = "";
@@ -258,7 +251,7 @@ print(header);
 				problem = ODEProblem(lindblad, v, (0.0, ideal_solution.t[end]), simulation_params);
 				detuned_solution = solve(problem, alg_hints=[:stiff], saveat=sampling, abstol=abstol, reltol=reltol);
 				
-				(max_vy, argmax_t, max_vy_b, argmax_t_b, max_vy_r, argmax_t_r) = get_max_vy(detuned_solution, ideal_solution, ramsey_solution);
+				(max_vy, argmax_t, max_vy_r, argmax_t_r) = get_max_vy(detuned_solution, ideal_solution, ramsey_solution);
 				
 				# alpha = vx^2*t1/t2-1/4;
 				# predicted = -t1*( 0.5*log((0.25+alpha)/((vz-0.5)^2+alpha)) + 1/(2*sqrt(alpha)) * (atan(-0.5/sqrt(alpha))-atan((vz-0.5)/sqrt(alpha))));
@@ -270,8 +263,6 @@ print(header);
 				output = output * ",$(ideal_solution.t[end])"; # Breakdown time or max simulation time
 				output = output * ",$(max_vy)"; # Max vy - coherence magnitude
 				output = output * ",$(argmax_t)"; # Time for max vy
-				output = output * ",$(max_vy_b)"; # Max vy - before Breakdown
-				output = output * ",$(argmax_t_b)"; # Time for max vy - before Breakdown
 				output = output * ",$(max_vy_r)"; # Max vy - ramsey
 				output = output * ",$(detuned_vy[end])"; # vy end - coherence magnitude
 				output = output * ",$(ramsey_vy[end])"; # vy end - ramsey
