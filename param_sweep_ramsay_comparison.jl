@@ -116,21 +116,19 @@ using NLopt, ForwardDiff;
 
 function get_crude_estimate_for_max(diffEqSolution, is_positive_detuning)
 	# Simply pick out the max from the solution array.
-	if is_positive_detuning
-		return argmax(map(u->u[2], diffEqSolution.u));
-	else
-		return argmax(map(u->-u[2], diffEqSolution.u));
-	end
+	prefactor = is_positive_detuning ? 1 : -1;
+	return argmax(map(u->prefactor*u[2], diffEqSolution.u));
 end
 
 # Find the true max vy using the solution to the differential equation.
 function max_vy_objective(t::Vector, grad::Vector, diffEqSolution, is_positive_detuning)
+	prefactor = is_positive_detuning ? 1 : -1;
 	if length(grad) > 0
 	   	# use ForwardDiff for the gradient for vy.
 	   	# using first(t) is supposed to be faster than t[1]
-	   	grad[1] = -ForwardDiff.derivative((t)->diffEqSolution(first(t), idxs=2), first(t))
+	   	grad[1] = prefactor * ForwardDiff.derivative((t)->diffEqSolution(first(t), idxs=2), first(t));
  	end
- 	-diffEqSolution(first(t), idxs=2)
+ 	return prefactor * diffEqSolution(first(t), idxs=2)
 end
 
 # Find the maximum vy achieved in the differential equation solutions.
@@ -195,10 +193,10 @@ param_space = Dict(
 if trial_run
 	param_space = Dict(
 		"t1" => range(50,50,step=10), # remember to convert to microseconds
-		"t2_lower_bound" => 50,
-		"t2_t1_ratio_upper_bound" => 1,
+		"t2_lower_bound" => 70,
+		"t2_t1_ratio_upper_bound" => 7/5,
 		# "t2" => range(50,60,step=10), # remember to convert to microseconds
-		"detune_ratio" => [-0.2,-0.5],#append!(collect(range(1/10,1/2,length=30)), 1 ./ collect(range(10,100,length=30)))#range(1/20,1/2,length=5)
+		"detune_ratio" => [0.44,-0.2,-0.5],#append!(collect(range(1/10,1/2,length=30)), 1 ./ collect(range(10,100,length=30)))#range(1/20,1/2,length=5)
 	);
 end
 
@@ -238,8 +236,8 @@ print(header);
 		# vx_maximum for stable regions is supposed to be
 		# 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)),
 		# which is the same as 0.5*sqrt(t2:t1)
-		vx_maximum = 0.5*sqrt(t2us/t1us);
-		vx_minimum = 0.02; # minimum((1,0.5*sqrt(t2us/t1us)))-0.001;
+		vx_maximum = 0.1516079783099616#0.5*sqrt(t2us/t1us);
+		vx_minimum = 0.1516079783099616#0.02; # minimum((1,0.5*sqrt(t2us/t1us)))-0.001;
 		for detune_ratio in param_space["detune_ratio"]
 			detuning_freq = detune_ratio/t2;
 			tend = 10*t2;
