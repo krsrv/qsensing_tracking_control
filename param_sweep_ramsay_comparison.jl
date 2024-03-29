@@ -185,7 +185,8 @@ param_space = Dict(
 		"t2_lower_bound" => 10,
 		"t2_t1_ratio_upper_bound" => 2,
 		# "t2" => range(10,400,step=10), # remember to convert to microseconds
-		"detune_ratio" => append!(collect(range(1/10,1/2,length=30)), 1 ./ collect(range(10,100,length=30)))
+		"detune_ratio" => append!(collect(range(1/10,1/2,length=30)), -1 .* collect(range(1/10,1/2,length=30)),
+			1 ./ collect(range(10,100,length=30)), -1 ./ collect(range(10,100,length=30)))
 	);
 if trial_run
 	param_space = Dict(
