@@ -1,5 +1,17 @@
 using DifferentialEquations;
 using LinearAlgebra;
+using ArgParse;
+
+s = ArgParseSettings()
+@add_arg_table s begin
+    "--trial"
+        help = "whether this is a trial run"
+        action = :store_true
+    "--breakdown"
+        help = "whether to run simulation over breakdown regions only"
+        action = :store_true
+end
+parsed_args = parse_args(ARGS, s);
 
 # This program runs a parameter sweep for coherence preservation enhanced quantum sensing.
 # The setup for the experiment is:
@@ -178,26 +190,27 @@ function get_max_vy(detuned_solution, ideal_solution, ramsey_solution, is_positi
 end
 
 # Parameters
-trial_run = true;
+trial_run = parsed_args["trial"];
 fine_sampling = false;
 extra_precision = true;
 
-param_space = Dict(
-		"t1" => range(10,200,step=10), # remember to convert to microseconds
-		"t2_lower_bound" => 10,
-		"t2_t1_ratio_upper_bound" => 2,
-		# "t2" => range(10,400,step=10), # remember to convert to microseconds
-		"detune_ratio" => append!(collect(range(1/10,1/2,length=30)), -1 .* collect(range(1/10,1/2,length=30)),
-			1 ./ collect(range(10,100,length=30)), -1 ./ collect(range(10,100,length=30)))
-	);
+function logrange(start,stop,len)
+	@assert stop > start;
+	@assert len > 1;
+	stepmul = (stop/start) ^ (1/(len-1));
+	return start * (stepmul .^ (0:len-1));
+end
+
+param_space = Dict();
 if trial_run
-	param_space = Dict(
-		"t1" => range(50,50,step=10), # remember to convert to microseconds
-		"t2_lower_bound" => 70,
-		"t2_t1_ratio_upper_bound" => 7/5,
-		# "t2" => range(50,60,step=10), # remember to convert to microseconds
-		"detune_ratio" => [0.44,-0.2,-0.5],#append!(collect(range(1/10,1/2,length=30)), 1 ./ collect(range(10,100,length=30)))#range(1/20,1/2,length=5)
-	);
+	param_space["t2"] = [50] # remember to convert to microseconds
+	param_space["t1"] = [[70]] # remember to convert to microseconds
+	param_space["detune_ratio"] = [0.44,-0.2,-0.5]
+else
+	param_space["t2"] = [100] # range(10,200,step=10); # remember to convert to microseconds
+	param_space["t1"] = [logrange(ceil(x/2),20*x,20) for x in param_space["t2"]]; # remember to convert to microseconds
+	param_space["detune_ratio"] = append!(collect(range(1/10,1/2,length=10)), -1 .* collect(range(1/10,1/2,length=10)),
+			1 ./ collect(range(10,100,length=10)), -1 ./ collect(range(10,100,length=10)))
 end
 
 sampling = [];
@@ -226,18 +239,21 @@ header = header * ",vy_end"; # vy end - coherence magnitude
 header = header * ",vy_end_r"; # vy end - ramsey
 header = header * "\n";
 print(header);
-@time for t1us in param_space["t1"]
-	t1 = t1us * 10^-6;
-	for t2us in range(param_space["t2_lower_bound"],param_space["t2_t1_ratio_upper_bound"]*t1us, step=10)
-		t2 = t2us * 10^-6;
-		# T2 < 2*T1 based on loop condition, so dephasing_gamma should be positive
+for (index, t2us) in enumerate(param_space["t2"])
+	t2 = t2us * 10^-6;
+	for t1us in param_space["t1"][index]
+		# T2 < 2*T1 based on loop condition ideally
+		if t2us > 2*t1us
+			continue
+		end
+		t1 = t1us * 10^-6;
 		dephasing_gamma = 0.5*((1/t2)-(1/(2*t1)));
 		thermal_gamma = 1 / t1;
 		# vx_maximum for stable regions is supposed to be
 		# 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)),
 		# which is the same as 0.5*sqrt(t2:t1)
-		vx_minimum = 0.5*sqrt(t2us/t1us);
-		vx_maximum = 0.7;
+		vx_minimum = parsed_args["breakdown"] ? 0.5*sqrt(t2us/t1us) : 0.02;
+		vx_maximum = parsed_args["breakdown"] ? 0.96 : 0.5*sqrt(t2us/t1us);
 		# vx_minimum = 0.02; # minimum((1,0.5*sqrt(t2us/t1us)))-0.001;
 		for detune_ratio in param_space["detune_ratio"]
 			detuning_freq = detune_ratio/t2;

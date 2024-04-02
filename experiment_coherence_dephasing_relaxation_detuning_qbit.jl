@@ -1,5 +1,30 @@
 using DifferentialEquations;
 using LinearAlgebra;
+using ArgParse;
+
+s = ArgParseSettings()
+@add_arg_table s begin
+    "--detuning-value"
+        help = "absolute value of detuning (linear frequency) in Hz. This supersedes the detuning_ratio flag if set"
+        arg_type = Float64
+    "--detuning-ratio"
+    	help = "detuning * T2 value. This can be superseded by the detuning-value if set."
+    	arg_type = Float64
+    	default = 0.1
+    "--t1"
+    	help = "T1 time in us"
+    	arg_type = Int
+    	default = 70
+    "--t2"
+    	help = "T2 time in us"
+    	arg_type = Int
+    	default = 50
+    "--vx"
+    	help = "Starting vx state"
+    	arg_type = Float64
+    	default = 0.5
+end
+parsed_args = parse_args(ARGS, s);
 
 # The setup for the experiment is:
 # 1. Z-axis dephasing
@@ -15,10 +40,13 @@ kb = 1.380649 * 1e-23; # Boltzmann's constant - Joule per Kelvin
 # 1/t2 = 1/(2t1) + 1/t_phi.
 # t_phi - corresponds to dephasing. Equal to 1/gamma
 # t1 - corresponds to thermal relaxation.
-t1 = 70 * 1e-6;
-t2 = 90 * 1e-6;
+t1 = parsed_args["t1"] * 1e-6;
+t2 = parsed_args["t2"] * 1e-6;
 dephasing_gamma = 0.5*((1/t2)-(1/(2*t1)));
 thermal_gamma = 1 / t1;
+@assert dephasing_gamma >= 0;
+
+detuning_freq = parsed_args["detuning-value"] == nothing ? parsed_args["detuning-ratio"]/t2 : parsed_args["detuning-value"];
 
 @enum SimulationType begin
 	# For detuning experiments, the static field is assumed to be (detuning_freq)/2 * σz
@@ -28,17 +56,6 @@ thermal_gamma = 1 / t1;
 	ideal_tracking_control = 2
 	detuned_tracking_control = 3
 end;
-
-# Arguments
-ignore_argument = true;
-if !ignore_argument && length(ARGS) == 0
-	print("Needs detuning frequency as argument\n");
-	exit();
-elseif !ignore_argument && length(ARGS) > 0
-	detuning_freq = parse(Float64, ARGS[1]);
-else
-	detuning_freq = 1/(2*t2);
-end
 
 # Sampling rate is 2.4 giga samples per sec
 sampling_rate = 2.4 * 1e9;
@@ -137,7 +154,7 @@ end
 is_ramsey_setup = false;
 simulation_type = ideal_tracking_control::SimulationType;
 if !is_ramsey_setup
-	x = 0.9;#0.5*sqrt(t2/t1);
+	x = parsed_args["vx"];#0.5*sqrt(t2/t1);
 	v = [x,0,sqrt(1-x^2)];
 else
 	simulation_type = ramsey_interferometry::SimulationType;
