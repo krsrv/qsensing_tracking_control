@@ -89,7 +89,7 @@ function get_hamiltonian(v,p,t)
 	elseif p[SIMULATION_TYPE] == detuned_tracking_control::SimulationType
 		# Use the ideal case hamiltonian at time t to apply here. The
 		# ideal case hamiltonian is a function of the state in ideal case at time t.
-		if t > p[IDEAL_TRAJECTORY].t[end]*0.9
+		if t > p[IDEAL_TRAJECTORY].t[end]
 			return detuning_hamiltonian;
 		end
 		buff_v = p[IDEAL_TRAJECTORY](t);
@@ -236,8 +236,9 @@ print(header);
 		# vx_maximum for stable regions is supposed to be
 		# 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)),
 		# which is the same as 0.5*sqrt(t2:t1)
-		vx_maximum = 0.1516079783099616#0.5*sqrt(t2us/t1us);
-		vx_minimum = 0.1516079783099616#0.02; # minimum((1,0.5*sqrt(t2us/t1us)))-0.001;
+		vx_minimum = 0.5*sqrt(t2us/t1us);
+		vx_maximum = 0.7;
+		# vx_minimum = 0.02; # minimum((1,0.5*sqrt(t2us/t1us)))-0.001;
 		for detune_ratio in param_space["detune_ratio"]
 			detuning_freq = detune_ratio/t2;
 			tend = 10*t2;
