@@ -41,48 +41,61 @@ end
 # Plot max vy as a function of vx for a fixed T1, T2 and detune ratio.
 # Set detune ratio to be 0.3
 buff_df = filter([:detune_ratio] => x -> x==0.05, df);
-buff_df = filter_t1(buff_df, 4);
+buff_df = filter_t1(buff_df, 3);
 # Start the actual plot
 for temp_df in groupby(buff_df, [:t1us])
 	sort!(temp_df,[:vx]);
 	stable_threshold_vx = 0.5 * sqrt(temp_df.t2us[1]/temp_df.t1us[1]);
-	graph = plot(temp_df.vx,log10.(temp_df.max_vy_r), label="Max (ramsey)", linestyle=:dashdot)
-	graph = plot!(temp_df.vx, log10.(temp_df.max_vy),
-			title="T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1])",
-			xlabel="vx", ylabel="Log10(vy)",
+	graph = plot(temp_df.vx, [0 for i in temp_df.vx], label="Equality", linestyle=:dashdot);
+	graph = plot!(temp_df.vx, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
+			title="vy vs vx (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1]))",
+			xlabel="vx", ylabel="Log10(vy (CM)/vy (Ramsey))",
 			xlims=(0,1),
 			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
 					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
-			label="Max",
+			label="(vy CM)/(vy Ramsey)",
 			size=(1500,800), markershape=:circle);
 	graph = plot!([stable_threshold_vx], label="Stable threshold", seriestype=:vline);
 	display(graph);
 end
 
-# Compare with crude estimates
+# Get the stats corresponding to the vx which gives the biggest vy value.
+# https://stackoverflow.com/questions/65024962/select-rows-of-a-dataframe-containing-minimum-of-grouping-variable-in-julia
+max_filter_df = combine(sdf -> sdf[argmax(sdf.max_vy), :], groupby(df, [:t1,:t2,:detune_ratio]));
+
+# Plot max vy ratio as a function of detuning ratio
+buff_df = filter_t1(max_filter_df, 3);
+# Start the actual plot
 for temp_df in groupby(buff_df, [:t1us])
-	sort!(temp_df,[:vx]);
-	stable_threshold_vx = 0.5 * sqrt(temp_df.t2us[1]/temp_df.t1us[1]);
-	graph = plot(temp_df.vx, log10.(temp_df.max_vy),
-			title="T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1])",
-			xlabel="vx", ylabel="Log10(vy)",
-			xlims=(0,1),
-			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
-					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
-			label="Nonlinear opt",
+	sort!(temp_df,[:detune_ratio]);
+	graph = plot(temp_df.detune_ratio, [0 for i in temp_df.vx], label="Equality", linestyle=:dashdot);
+	graph = plot!(temp_df.detune_ratio, [log10(1.1) for i in temp_df.vx], label="10% increase", linestyle=:dashdot);
+	graph = plot!(temp_df.detune_ratio, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
+			title="vy vs detuning (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us)",
+			xlabel="Detuning freq * T2", ylabel="Log10(vy (CM)/vy (Ramsey))",
+			label="Log10((vy CM)/(vy Ramsey))",
 			size=(1500,800), markershape=:circle);
-	graph = plot!(temp_df.vx, log10.(temp_df.estimate_max_vy),
-			title="T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1])",
-			xlabel="vx", ylabel="Log10(vy)",
-			xlims=(0,1),
-			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
-					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
-			label="Crude estimates",
-			size=(1500,800), markershape=:circle);
-	graph = plot!([stable_threshold_vx], label="Stable threshold", seriestype=:vline);
 	display(graph);
 end
 
+# Plot vx which maximises vy as a function of detuning ratio.
+buff_df = filter_t1(max_filter_df, 3);
+# Start the actual plot
+for temp_df in groupby(buff_df, [:t1us])
+	sort!(temp_df,[:detune_ratio]);
+	graph = plot(temp_df.detune_ratio, temp_df.vx,
+			title="maximising vx vs detuning (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us)",
+			xlabel="Detuning freq * T2", ylabel="Maximising vx",
+			label="vx",
+			ylims=(0,1),
+			size=(1500,800), markershape=:circle);
+	display(graph);
+end
+
+
+##############
+# Old graphs #
+##############
 for buff_df in groupby(df, [:t2us])
 	buff_df = filter([:t1us] => x -> x < 500, buff_df)
 	sort!(buff_df,[:detune_ratio]);
