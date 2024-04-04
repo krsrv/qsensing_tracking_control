@@ -3,6 +3,8 @@ using DataFrames;
 using Plots;
 plotly();
 
+linewidth=3;
+
 filename = "consistent.csv"
 df = CSV.read(filename, DataFrame; header=1);
 
@@ -46,16 +48,17 @@ buff_df = filter_t1(buff_df, 3);
 for temp_df in groupby(buff_df, [:t1us])
 	sort!(temp_df,[:vx]);
 	stable_threshold_vx = 0.5 * sqrt(temp_df.t2us[1]/temp_df.t1us[1]);
-	graph = plot(temp_df.vx, [0 for i in temp_df.vx], label="Equality", linestyle=:dashdot);
-	graph = plot!(temp_df.vx, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
+	graph = plot();
+	plot!(graph, temp_df.vx, [0 for i in temp_df.vx], label="Equality", linestyle=:dashdot, linewidth=linewidth);
+	plot!(graph, temp_df.vx, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
 			title="vy vs vx (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1]))",
 			xlabel="vx", ylabel="Log10(vy (CM)/vy (Ramsey))",
+			label="(vy CM)/(vy Ramsey)",
 			xlims=(0,1),
 			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
 					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
-			label="(vy CM)/(vy Ramsey)",
-			size=(1500,800), markershape=:circle);
-	graph = plot!([stable_threshold_vx], label="Stable threshold", seriestype=:vline);
+			size=(1500,800), linewidth=linewidth, markershape=:circle);
+	plot!(graph, [stable_threshold_vx], label="Stable threshold", linewidth=linewidth, seriestype=:vline);
 	display(graph);
 end
 
@@ -68,13 +71,19 @@ buff_df = filter_t1(max_filter_df, 3);
 # Start the actual plot
 for temp_df in groupby(buff_df, [:t1us])
 	sort!(temp_df,[:detune_ratio]);
-	graph = plot(temp_df.detune_ratio, [0 for i in temp_df.vx], label="Equality", linestyle=:dashdot);
-	graph = plot!(temp_df.detune_ratio, [log10(1.1) for i in temp_df.vx], label="10% increase", linestyle=:dashdot);
-	graph = plot!(temp_df.detune_ratio, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
+	graph = plot();
+	graph_twin = twinx(graph);
+	plot!(graph, temp_df.detune_ratio, [0 for i in temp_df.vx], label="Equality", linewidth=linewidth, linestyle=:dashdot);
+	plot!(graph, temp_df.detune_ratio, [log10(1.1) for i in temp_df.vx], label="10% increase", linewidth=linewidth, linestyle=:dashdot);
+	plot!(graph, temp_df.detune_ratio, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
 			title="vy vs detuning (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us)",
 			xlabel="Detuning freq * T2", ylabel="Log10(vy (CM)/vy (Ramsey))",
-			label="Log10((vy CM)/(vy Ramsey))",
-			size=(1500,800), markershape=:circle);
+			label="Log10((vy CM)/(vy Ramsey))", legend=:topleft,
+			size=(1500,800), linewidth=linewidth, markershape=:circle);
+	plot!(graph_twin, temp_df.detune_ratio, temp_df.max_vy, 
+			label="Max vy", ylabel="Max vy", xshowaxis=false,
+			legend=:topright, ymirror = true,
+			ylims=(0,1), linewidth=linewidth, markershape=:circle);
 	display(graph);
 end
 
@@ -83,12 +92,13 @@ buff_df = filter_t1(max_filter_df, 3);
 # Start the actual plot
 for temp_df in groupby(buff_df, [:t1us])
 	sort!(temp_df,[:detune_ratio]);
-	graph = plot(temp_df.detune_ratio, temp_df.vx,
+	graph = plot()
+	plot!(graph, temp_df.detune_ratio, temp_df.vx,
 			title="maximising vx vs detuning (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us)",
 			xlabel="Detuning freq * T2", ylabel="Maximising vx",
 			label="vx",
 			ylims=(0,1),
-			size=(1500,800), markershape=:circle);
+			size=(1500,800), linewidth=linewidth, markershape=:circle);
 	display(graph);
 end
 
