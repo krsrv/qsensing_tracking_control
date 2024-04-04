@@ -52,7 +52,7 @@ detuning_freq = parsed_args["detuning-value"] == nothing ? parsed_args["detuning
 	# For detuning experiments, the static field is assumed to be (detuning_freq)/2 * σz
 	# in linear frequency units. With no dissipation and external control, this is
 	# expected to give oscillations with time period (1/detuning_freq).
-	ramsey_interferometry = 1
+	detuned_free_decay = 1
 	ideal_tracking_control = 2
 	detuned_tracking_control = 3
 end;
@@ -109,7 +109,7 @@ function get_hamiltonian(v,p,t)
 	detuning_hamiltonian = [0,0,detuning_freq/2 * 2 * pi];
 	# dephasing_hamiltonian(x) = -dephasing_gamma / x[3] * [x[2], -x[1], 0];
 	# thermal_hamiltonian(x) = -thermal_gamma / (4 * x[3]) * [x[2], -x[1], 0];
-	if p[1] == ramsey_interferometry::SimulationType
+	if p[1] == detuned_free_decay::SimulationType
 		return detuning_hamiltonian;
 	elseif p[1] == ideal_tracking_control::SimulationType
 		dephasing_hamiltonian = -dephasing_gamma / v[3] * [v[2], -v[1], 0];
@@ -118,7 +118,7 @@ function get_hamiltonian(v,p,t)
 	elseif p[1] == detuned_tracking_control::SimulationType
 		# Use the ideal case hamiltonian at time t to apply here. The
 		# ideal case hamiltonian is a function of the state in ideal case at time t.
-		if t > p[2].t[end]*0.9
+		if t > p[2].t[end]
 			return detuning_hamiltonian;
 		end
 		buff_v = p[2](t);
@@ -157,7 +157,7 @@ if !is_ramsey_setup
 	x = parsed_args["vx"];#0.5*sqrt(t2/t1);
 	v = [x,0,sqrt(1-x^2)];
 else
-	simulation_type = ramsey_interferometry::SimulationType;
+	simulation_type = detuned_free_decay::SimulationType;
 	v = [1,0,0]
 end
 tend = 6*t2;
@@ -179,7 +179,7 @@ end
 
 ideal_solution = solve_wrapper(v, tend, ideal_tracking_control::SimulationType, nothing);
 detuned_solution = solve_wrapper(v, tend, detuned_tracking_control::SimulationType, ideal_solution);
-ramsey_solution = solve_wrapper([1,0,0], tend, ramsey_interferometry::SimulationType, nothing);
+ramsey_solution = solve_wrapper([1,0,0], tend, detuned_free_decay::SimulationType, nothing);
 
 using Plots;
 plotly();
@@ -187,27 +187,41 @@ plotly();
 # Graph attributes
 linewidth = 3;
 size = (1500,800);
-plot(ideal_solution, size=size, linewidth=linewidth, show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal", label=["vx ideal" "vy ideal" "vz ideal"]);
+
+plot(ideal_solution, size=size, linewidth=linewidth, show=true,
+		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal",
+		xlabel="Time (s)",
+		label=["vx ideal" "vy ideal" "vz ideal"]);
 # plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
 # plot(ideal_solution.t,
-# 	[[get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[1] for u in ideal_solution.u],
-# 	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[2] for u in ideal_solution.u],
-# 	 [get_hamiltonian(u,(ramsey_interferometry::SimulationType,nothing),0)[3] for u in ideal_solution.u]
+# 	[[get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[1] for u in ideal_solution.u],
+# 	 [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[2] for u in ideal_solution.u],
+# 	 [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[3] for u in ideal_solution.u]
 # 	], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
 
-plot(detuned_solution, size=size, linewidth=linewidth, show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
+
+plot(detuned_solution, size=size, linewidth=linewidth, show=true,
+		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz",
+		xlabel="Time (s)",
+		label=["vx" "vy" "vz"]);
 # plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
 
-plot(ramsey_solution, size=size, linewidth=linewidth, show=true, title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz", label=["vx" "vy" "vz"]);
-
+plot(ramsey_solution, size=size, linewidth=linewidth, show=true,
+		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz",
+		xlabel="Time (s)",
+		label=["vx" "vy" "vz"]);
 # print("Ideal solution - area under v_y: ", integral(ideal_solution), "\n")
 # print("Detuned solution - area under v_y: ", integral(detuned_solution), "\n")
 
-# detuned_vy=[abs(detuned_solution.u[i][2]) for i in range(1,length(detuned_solution))];
-# ramsey_vy=[abs(ramsey_solution.u[i][2]) for i in range(1,length(ramsey_solution))];
-# print("v_y max in detuned solution: ", maximum(vy), "\n");
-# print(detuned_vy[end], "\t", ideal_solution.u[end][3], "\n");
-# print("$(detuning_freq),$(maximum(detuned_vy)),$(maximum(ramsey_vy)),$(detuned_vy[end]),$(ramsey_vy[end])\n");
+vx, vy = 0.4, 0.5;
+free_decay_solution = solve_wrapper([vx,vy,0], tend, detuned_free_decay::SimulationType, nothing);
+predicted_max = atan(detuning_freq * 2 * pi * t2)-atan(vy/vx) > 0 ? sqrt(vx^2+vy^2) * exp(-(atan(detuning_freq * 2 * pi * t2)-atan(vy/vx))/(detuning_freq * 2 * pi * t2)) * sin(atan(detuning_freq * 2 * pi * t2)) : vy;
+plot(free_decay_solution, size=size, linewidth=linewidth,
+		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Free Decay, Detuning=$(round(detuning_freq))Hz",
+		xlabel="Time (s)",
+		label=["vx" "vy" "vz"]);
+plot!(free_decay_solution.t, [predicted_max for u in free_decay_solution.u], linewidth=linewidth, show=true,
+		size=size, label="Predicted max", linestyle=:dash, linecolor=:black,);
 
 # using JLD2;
 # @save "ideal_solution.jld2" ideal_solution

@@ -40,7 +40,7 @@ IDEAL_TRAJECTORY = 5;
 	# For detuning experiments, the static field is assumed to be (detuning_freq)/2 * σz
 	# in linear frequency units. With no dissipation and external control, this is
 	# expected to give oscillations with time period (1/detuning_freq).
-	ramsey_interferometry = 1
+	detuned_free_decay = 1
 	ideal_tracking_control = 2
 	detuned_tracking_control = 3
 end;
@@ -92,7 +92,7 @@ function get_hamiltonian(v,p,t)
 	detuning_hamiltonian = [0,0,p[DETUNING_FREQ]/2 * 2 * pi];
 	# dephasing_hamiltonian(x) = -dephasing_gamma / x[3] * [x[2], -x[1], 0];
 	# thermal_hamiltonian(x) = -thermal_gamma / (4 * x[3]) * [x[2], -x[1], 0];
-	if p[SIMULATION_TYPE] == ramsey_interferometry::SimulationType
+	if p[SIMULATION_TYPE] == detuned_free_decay::SimulationType
 		return detuning_hamiltonian;
 	elseif p[SIMULATION_TYPE] == ideal_tracking_control::SimulationType
 		dephasing_hamiltonian = -p[DEPHASING_GAMMA] / v[3] * [v[2], -v[1], 0];
@@ -259,7 +259,7 @@ for (index, t2us) in enumerate(param_space["t2"])
 			tend = 10*t2;
 			# Ramsey interference setup
 			simulation_params = (
-				ramsey_interferometry::SimulationType, # simulation type
+				detuned_free_decay::SimulationType, # simulation type
 				detuning_freq,
 				dephasing_gamma,
 				thermal_gamma,

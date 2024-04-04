@@ -34,7 +34,7 @@ function filter_t1(df, t1_value_choice)
 		df = filter([:t1us] => x -> abs(x-t1_value) < 1e-1, df);
 	elseif t1_value_choice == 3
 		# Pick out the T1 corresponding to the custom value.
-		t1_value = 61;
+		t1_value = 109;
 		df = filter([:t1us] => x -> abs(x-t1_value) < 1e-1, df);
 	end
 	return df;
@@ -69,23 +69,28 @@ max_filter_df = combine(sdf -> sdf[argmax(sdf.max_vy), :], groupby(df, [:t1,:t2,
 # Plot max vy ratio as a function of detuning ratio
 buff_df = filter_t1(max_filter_df, 3);
 # Start the actual plot
+gr();
 for temp_df in groupby(buff_df, [:t1us])
 	sort!(temp_df,[:detune_ratio]);
 	graph = plot();
 	graph_twin = twinx(graph);
 	plot!(graph, temp_df.detune_ratio, [0 for i in temp_df.vx], label="Equality", linewidth=linewidth, linestyle=:dashdot);
 	plot!(graph, temp_df.detune_ratio, [log10(1.1) for i in temp_df.vx], label="10% increase", linewidth=linewidth, linestyle=:dashdot);
+	plot!(graph, temp_df.detune_ratio, [log10(1.3) for i in temp_df.vx], label="30% increase", linewidth=linewidth, linestyle=:dashdot);
 	plot!(graph, temp_df.detune_ratio, log10.(temp_df.max_vy ./ temp_df.max_vy_r),
 			title="vy vs detuning (T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us)",
-			xlabel="Detuning freq * T2", ylabel="Log10(vy (CM)/vy (Ramsey))",
+			xlabel="Detuning freq * T2", ylabel="Log10(vy (CM)/vy (Ramsey))", yshowaxis=true,
 			label="Log10((vy CM)/(vy Ramsey))", legend=:topleft,
 			size=(1500,800), linewidth=linewidth, markershape=:circle);
+	# This does not work in plotly. Use gr backend.
 	plot!(graph_twin, temp_df.detune_ratio, temp_df.max_vy, 
 			label="Max vy", ylabel="Max vy", xshowaxis=false,
 			legend=:topright, ymirror = true,
 			ylims=(0,1), linewidth=linewidth, markershape=:circle);
 	display(graph);
 end
+# Switch back to plotly backend after simulation.
+plotly();
 
 # Plot vx which maximises vy as a function of detuning ratio.
 buff_df = filter_t1(max_filter_df, 3);
