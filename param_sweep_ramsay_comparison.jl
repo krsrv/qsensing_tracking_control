@@ -254,7 +254,6 @@ for (index, t2us) in enumerate(param_space["t2"])
 		# which is the same as 0.5*sqrt(t2:t1)
 		vx_minimum = parsed_args["breakdown"] ? 0.5*sqrt(t2us/t1us) : 0.02;
 		vx_maximum = parsed_args["breakdown"] ? 0.96 : 0.5*sqrt(t2us/t1us);
-		# vx_minimum = 0.02; # minimum((1,0.5*sqrt(t2us/t1us)))-0.001;
 		for detune_ratio in param_space["detune_ratio"]
 			detuning_freq = detune_ratio/t2;
 			tend = 10*t2;

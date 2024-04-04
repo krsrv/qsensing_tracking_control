@@ -3,65 +3,167 @@ using DataFrames;
 using Plots;
 plotly();
 
-# Only 60 seconds to create output for vy
-df = CSV.read("detuning_to_t2_fixed_v.csv", DataFrame; header=1);
-# rename!(df,[:t1,:t2,:detuning,:vx,:sim_z,:sim_h,:sim_dis,:cm_vy_max,:ramsey_vy_max,:cm_vy_max_t,:ramsey_vy_max_t,:cm_vy_end,:ramsey_vy_end,:sim_ratio]);
+filename = "consistent.csv"
+df = CSV.read(filename, DataFrame; header=1);
 
-# df.detuning_log = log10.(df.detuning);
-df.t1 = ceil.(df.t1*10^6);
-df.t2 = ceil.(df.t2*10^6);
+# T1 and T2 are stored in units of us. Convert to integers and
+# store in a new column.
+df.t1us = ceil.(df.t1);
+df.t1 = 1e-6.*(df.t1);
+df.t2us = ceil.(df.t2);
+df.t2 = 1e-6.*(df.t2);
 
-# filter([:ramsey_vy_max,:cm_vy_end]=>(x,y)->x<y,df)
-function calculate_predicted_vy_end(t1,t2,detuning_t2,vx)
-	dephasing_gamma = 0.5*10^6*((1/t2)-(1/(2*t1)));
-	thermal_gamma = 10^6 / t1;
-	detuning = detuning_t2/t2*10^6;
-	# alpha = dephasing_gamma + thermal_gamma/4;
-	# vz_inf = 0.5 + 0.5*sqrt(1-8*vx^2*alpha/thermal_gamma); # Predicted stable z for ideal solution
-	# H = alpha * vx / vz_inf; # Predicted stable H for ideal solution
-	# angular_detuning = detuning * pi;
-	# vy_end = H * angular_detuning / (alpha^2 + angular_detuning^2 + 2*H*alpha/thermal_gamma);
-	# vx_end = alpha*vy_end/angular_detuning;
-	# vz_end = 1-2*H*vx_end/thermal_gamma;
-	# return [vz_inf, H, vy_end, vx_end^2+vy_end^2+vz_end^2<=1];
-	vy_end = detuning*sqrt()
-	return [vy_end];
+function logrange(start,stop,len)
+	@assert stop > start;
+	@assert len > 1;
+	stepmul = (stop/start) ^ (1/(len-1));
+	return start * (stepmul .^ (0:len-1));
 end
-transform!(df, [:t1,:t2,:detuning_t2,:vx] => ByRow(calculate_predicted_vy_end) => [:predicted_vz,:predicted_H,:predicted_vy_end,:valid]);
-df[:,[:t1,:t2,:detuning_t2,:vx,:predicted_vy_end,:cm_vy_end]]
 
-
-# Plot vy as a function of detuning * t2
-for buff_df in groupby(df, [:t1])
-	if buff_df.t1[1] != 60
-		continue
+function filter_t1(df, t1_value_choice)
+	# Decide whether we want to plot for a single value for T1 or for all T1 values.
+	if t1_value_choice == 1
+		# Pick out the T1 corresponding to min T1 greater than T2.
+		t1_value = minimum(filter([:t1us] => x -> x > df.t2us[1], df).t1us);
+		df = filter([:t1us] => x -> abs(x-t1_value) < 1e-1, df);
+	elseif t1_value_choice == 2
+		# Pick out the T1 corresponding to max T1 lesser than T2.
+		t1_value = maximum(filter([:t1us] => x -> x < df.t2us[1], df).t1us);
+		df = filter([:t1us] => x -> abs(x-t1_value) < 1e-1, df);
+	elseif t1_value_choice == 3
+		# Pick out the T1 corresponding to the custom value.
+		t1_value = 61;
+		df = filter([:t1us] => x -> abs(x-t1_value) < 1e-1, df);
 	end
-	sort!(buff_df,[:detuning_t2]);
-	labels=["T2 - $(x.t2) us" for x in eachrow(unique(buff_df,:t2))];
+	return df;
+end
+
+# Plot max vy as a function of vx for a fixed T1, T2 and detune ratio.
+# Set detune ratio to be 0.3
+buff_df = filter([:detune_ratio] => x -> x==0.05, df);
+buff_df = filter_t1(buff_df, 4);
+# Start the actual plot
+for temp_df in groupby(buff_df, [:t1us])
+	sort!(temp_df,[:vx]);
+	stable_threshold_vx = 0.5 * sqrt(temp_df.t2us[1]/temp_df.t1us[1]);
+	graph = plot(temp_df.vx,log10.(temp_df.max_vy_r), label="Max (ramsey)", linestyle=:dashdot)
+	graph = plot!(temp_df.vx, log10.(temp_df.max_vy),
+			title="T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1])",
+			xlabel="vx", ylabel="Log10(vy)",
+			xlims=(0,1),
+			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
+					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
+			label="Max",
+			size=(1500,800), markershape=:circle);
+	graph = plot!([stable_threshold_vx], label="Stable threshold", seriestype=:vline);
+	display(graph);
+end
+
+# Compare with crude estimates
+for temp_df in groupby(buff_df, [:t1us])
+	sort!(temp_df,[:vx]);
+	stable_threshold_vx = 0.5 * sqrt(temp_df.t2us[1]/temp_df.t1us[1]);
+	graph = plot(temp_df.vx, log10.(temp_df.max_vy),
+			title="T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1])",
+			xlabel="vx", ylabel="Log10(vy)",
+			xlims=(0,1),
+			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
+					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
+			label="Nonlinear opt",
+			size=(1500,800), markershape=:circle);
+	graph = plot!(temp_df.vx, log10.(temp_df.estimate_max_vy),
+			title="T2 = $(temp_df.t2us[1]) us, T1 = $(temp_df.t1us[1]) us, Detuning ratio = $(temp_df.detune_ratio[1])",
+			xlabel="vx", ylabel="Log10(vy)",
+			xlims=(0,1),
+			xticks=(append!([x*stable_threshold_vx for x in logrange(0.5,2,10)],[1]),
+					append!(["$(round(x,digits=3)) * v0" for x in logrange(0.5,2,10)],["1"])),
+			label="Crude estimates",
+			size=(1500,800), markershape=:circle);
+	graph = plot!([stable_threshold_vx], label="Stable threshold", seriestype=:vline);
+	display(graph);
+end
+
+for buff_df in groupby(df, [:t2us])
+	buff_df = filter([:t1us] => x -> x < 500, buff_df)
+	sort!(buff_df,[:detune_ratio]);
+	labels=["T1 - $(x.t1us) us" for x in eachrow(unique(buff_df,:t1us))];
 	
-	graph = plot(buff_df.detuning_t2, log10.(buff_df.cm_vy_max),
-		title="T1 = $(buff_df.t1[1]) us", group=buff_df.t2,
+	graph = plot(buff_df.detune_ratio, log10.(buff_df.max_vy),
+		title="T2 = $(buff_df.t2us[1]) us", group=buff_df.t1us,
 		xlabel="Detuning × T2", ylabel="Log10(vy)",
-		labels=reshape([x*" (CM max)" for x in labels], 1, length(labels)),
-		size=(1500,800));
+		labels=reshape([x * " (CM max)" for x in labels], 1, length(labels)),
+		size=(1500,800), markershape=:square);
 	# graph = plot(1 ./ buff_df.detuning_t2, log10.(buff_df.cm_vy_max), title="T1 = $(buff_df.t1[1]) us", group=buff_df.t2,
 	# 	xlabel="Gamma/Detuning", ylabel="Log(vy)", labels=reshape([x*" (CM max)" for x in labels], 1, length(labels)), size=(1500,800));
 	
 	plot_only_one_ramsey = true
 	if plot_only_one_ramsey
-		another_buff_df = filter([:t2]=> (x) -> buff_df.t2[1]==x, buff_df)
-		graph = plot!(another_buff_df.detuning_t2, log10.(another_buff_df.ramsey_vy_max),
-			title="T1 = $(another_buff_df.t1[1]) us",
+		# Filter DF with same T2
+		another_buff_df = filter([:t2us] => (x) -> buff_df.t2us[1]==x, buff_df)
+		graph = plot!(another_buff_df.detune_ratio, log10.(another_buff_df.max_vy_r),
+			title="T2 = $(another_buff_df.t2us[1]) us",
 			xlabel="Detuning × T2", ylabel="Log10(vy)",
 			labels="Ramsey",
 			size=(1500,800), linestyle=:dash, linecolor=:black, markershape=:circle);
 	else
-		graph = plot!(buff_df.detuning_t2, log10.(buff_df.ramsey_vy_max),
-			title="T1 = $(buff_df.t1[1]) us", group=buff_df.t2,
+		graph = plot!(buff_df.detune_ratio, log10.(buff_df.max_vy_r),
+		title="T2 = $(another_buff_df.t2us[1]) us", group=buff_df.t1us,
 			xlabel="Detuning × T2", ylabel="Log10(vy)",
 			labels=reshape([x*" (Ramsey)" for x in labels],1, length(labels)),
 			size=(1500,800), linestyle=:dash);
 	end
+	display(graph);
+end
+
+# Plot vy as a function of detuning * t2, with T2 fixed in each graph.
+for buff_df in groupby(df, [:t2us])
+	buff_df = filter([:t1us] => x -> x < 500, buff_df)
+	sort!(buff_df,[:detune_ratio]);
+	labels=["T1 - $(x.t1us) us" for x in eachrow(unique(buff_df,:t1us))];
+	
+	graph = plot(buff_df.detune_ratio, log10.(buff_df.max_vy),
+		title="T2 = $(buff_df.t2us[1]) us", group=buff_df.t1us,
+		xlabel="Detuning × T2", ylabel="Log10(vy)",
+		labels=reshape([x * " (CM max)" for x in labels], 1, length(labels)),
+		size=(1500,800), markershape=:square);
+	# graph = plot(1 ./ buff_df.detuning_t2, log10.(buff_df.cm_vy_max), title="T1 = $(buff_df.t1[1]) us", group=buff_df.t2,
+	# 	xlabel="Gamma/Detuning", ylabel="Log(vy)", labels=reshape([x*" (CM max)" for x in labels], 1, length(labels)), size=(1500,800));
+	
+	plot_only_one_ramsey = true
+	if plot_only_one_ramsey
+		# Filter DF with same T2
+		another_buff_df = filter([:t2us] => (x) -> buff_df.t2us[1]==x, buff_df)
+		graph = plot!(another_buff_df.detune_ratio, log10.(another_buff_df.max_vy_r),
+			title="T2 = $(another_buff_df.t2us[1]) us",
+			xlabel="Detuning × T2", ylabel="Log10(vy)",
+			labels="Ramsey",
+			size=(1500,800), linestyle=:dash, linecolor=:black, markershape=:circle);
+	else
+		graph = plot!(buff_df.detune_ratio, log10.(buff_df.max_vy_r),
+		title="T2 = $(another_buff_df.t2us[1]) us", group=buff_df.t1us,
+			xlabel="Detuning × T2", ylabel="Log10(vy)",
+			labels=reshape([x*" (Ramsey)" for x in labels],1, length(labels)),
+			size=(1500,800), linestyle=:dash);
+	end
+	display(graph);
+end
+
+# Compare crude estimates vs NLopt estimate for max vy
+for buff_df in groupby(df, [:t2])
+	sort!(buff_df,[:detune_ratio]);
+	labels=["T1 - $(x.t1) us" for x in eachrow(unique(buff_df,:t1))];
+	
+	graph = plot(buff_df.detune_ratio, log10.(buff_df.max_vy),
+		title="T2 = $(buff_df.t2[1]) us", group=buff_df.t1,
+		xlabel="Detuning × T2", ylabel="Log10(vy)",
+		labels=reshape([x * " (CM max)" for x in labels], 1, length(labels)),
+		size=(1500,800), markershape=:square);
+	
+	graph = plot(buff_df.detune_ratio, log10.(buff_df.max_vy),
+		title="T2 = $(buff_df.t2[1]) us", group=buff_df.t1,
+		xlabel="Detuning × T2", ylabel="Log10(vy)",
+		labels=reshape([x * " (CM max)" for x in labels], 1, length(labels)),
+		size=(1500,800), markershape=:circle);
 	display(graph);
 end
 
