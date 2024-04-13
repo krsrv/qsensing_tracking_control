@@ -40,8 +40,10 @@ kb = 1.380649 * 1e-23; # Boltzmann's constant - Joule per Kelvin
 # 1/t2 = 1/(2t1) + 1/t_phi.
 # t_phi - corresponds to dephasing. Equal to 1/gamma
 # t1 - corresponds to thermal relaxation.
-t1 = parsed_args["t1"] * 1e-6;
-t2 = parsed_args["t2"] * 1e-6;
+t1us = parsed_args["t1"];
+t2us = parsed_args["t2"];
+t1 = t1us * 1e-6;
+t2 = t2us * 1e-6;
 dephasing_gamma = 0.5*((1/t2)-(1/(2*t1)));
 thermal_gamma = 1 / t1;
 @assert dephasing_gamma >= 0;
@@ -153,6 +155,7 @@ end
 
 is_ramsey_setup = false;
 simulation_type = ideal_tracking_control::SimulationType;
+v = [0,0,0];
 if !is_ramsey_setup
 	x = parsed_args["vx"];#0.5*sqrt(t2/t1);
 	v = [x,0,sqrt(1-x^2)];
@@ -162,13 +165,30 @@ else
 end
 tend = 6*t2;
 
+# Return predicted breakdown time for ideal tracking control in units of T2.
+function calculate_breakdown(starting_state, t1us, t2us)
+	vx, vy, vz = starting_state;
+	if vx^2 + vy^2 <= 0.25* t2us/t1us
+		return Inf
+	end
+	alpha = sqrt(4 * t1us * (vx^2+vy^2)  / t2us - 1);
+	tb = (1/alpha * (atan(1/alpha) + atan((2*vz-1)/alpha)) + 0.5 * log( ((2*vz-1)^2+alpha^2)/(1+alpha^2) )) * t1us/t2us;
+	return tb;
+end
+
 function solve_wrapper(starting_state, time_end, simulation_type, past_solution)
 	verbose = true;
 	if verbose
 		print("Starting simulation for: $(simulation_type)\n")
 		print("Initial state: $(starting_state)\n");
 		print("T1, T2: $(round(t1*1e6))us, $(round(t2*1e6))us\n");
-		print("Detuning frequency: $(round(detuning_freq)) Hz\n");
+		if simulation_type == ideal_tracking_control::SimulationType
+			tb = calculate_breakdown(starting_state, t1us, t2us);
+			print("Predicted breakdown: $(tb) T2 units\n");
+		end
+		if simulation_type == detuned_tracking_control::SimulationType || simulation_type == detuned_free_decay::SimulationType
+			print("Detuning frequency: $(round(detuning_freq)) Hz\n");
+		end
 		print("\n");
 	end
 	abstol, reltol = 1e-8,1e-6;
@@ -188,9 +208,14 @@ plotly();
 linewidth = 3;
 size = (1500,800);
 
+# Technical note:
+# - using xaxis=:scaling_function changes the scale on the plot, but on hover you still see
+#   the original data point value. Also, the change is purely visual so any formula using
+#   x must refer to the original x value. For example, xlims(min, max) should refer to the
+#   min, max in the original x dataset.
 plot(ideal_solution, size=size, linewidth=linewidth, show=true,
 		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal",
-		xlabel="Time (s)",
+		xlabel="Time/T2", xlims=(0, 1.05 * ideal_solution.t[end]), xaxis = (x) -> x/t2,
 		label=["vx ideal" "vy ideal" "vz ideal"]);
 # plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
 # plot(ideal_solution.t,
@@ -199,29 +224,32 @@ plot(ideal_solution, size=size, linewidth=linewidth, show=true,
 # 	 [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[3] for u in ideal_solution.u]
 # 	], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
 
-
-plot(detuned_solution, size=size, linewidth=linewidth, show=true,
-		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz",
-		xlabel="Time (s)",
-		label=["vx" "vy" "vz"]);
+graph = plot();
+plot!(graph, detuned_solution, size=size, linewidth=linewidth,
+	title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz",
+	xlabel="Time/T2", xaxis = (x) -> x/t2,
+	label=["vx" "vy" "vz"]);
+vx = parsed_args["vx"];
+display(graph)
 # plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
 
 plot(ramsey_solution, size=size, linewidth=linewidth, show=true,
 		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz",
-		xlabel="Time (s)",
+		xlabel="Time/T2", xaxis = (x) -> x/t2,
 		label=["vx" "vy" "vz"]);
 # print("Ideal solution - area under v_y: ", integral(ideal_solution), "\n")
 # print("Detuned solution - area under v_y: ", integral(detuned_solution), "\n")
 
-vx, vy = 0.4, 0.5;
-free_decay_solution = solve_wrapper([vx,vy,0], tend, detuned_free_decay::SimulationType, nothing);
-predicted_max = atan(detuning_freq * 2 * pi * t2)-atan(vy/vx) > 0 ? sqrt(vx^2+vy^2) * exp(-(atan(detuning_freq * 2 * pi * t2)-atan(vy/vx))/(detuning_freq * 2 * pi * t2)) * sin(atan(detuning_freq * 2 * pi * t2)) : vy;
-plot(free_decay_solution, size=size, linewidth=linewidth,
-		title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Free Decay, Detuning=$(round(detuning_freq))Hz",
-		xlabel="Time (s)",
-		label=["vx" "vy" "vz"]);
-plot!(free_decay_solution.t, [predicted_max for u in free_decay_solution.u], linewidth=linewidth, show=true,
-		size=size, label="Predicted max", linestyle=:dash, linecolor=:black,);
+## Free decay - like Ramsey but initial state other than (1,0,0)
+# vx, vy = 0.4, 0.5;
+# free_decay_solution = solve_wrapper([vx,vy,0], tend, detuned_free_decay::SimulationType, nothing);
+# predicted_max = atan(detuning_freq * 2 * pi * t2)-atan(vy/vx) > 0 ? sqrt(vx^2+vy^2) * exp(-(atan(detuning_freq * 2 * pi * t2)-atan(vy/vx))/(detuning_freq * 2 * pi * t2)) * sin(atan(detuning_freq * 2 * pi * t2)) : vy;
+# plot(free_decay_solution, size=size, linewidth=linewidth,
+#         title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Free Decay, Detuning=$(round(detuning_freq))Hz",
+#         xlabel="Time/T2",
+#         label=["vx" "vy" "vz"]);
+# plot!(free_decay_solution.t, [predicted_max for u in free_decay_solution.u], linewidth=linewidth, show=true,
+#         size=size, label="Predicted max", linestyle=:dash, linecolor=:black,);
 
 # using JLD2;
 # @save "ideal_solution.jld2" ideal_solution
