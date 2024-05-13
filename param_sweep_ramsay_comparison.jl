@@ -1,6 +1,7 @@
 using DifferentialEquations;
 using LinearAlgebra;
 using ArgParse;
+using BSON;
 
 s = ArgParseSettings()
 @add_arg_table s begin
@@ -126,6 +127,50 @@ end
 # Methods for finding optimums
 using NLopt, ForwardDiff;
 
+function get_crude_estimate_for_vyst(diffEqSolution, is_positive_detuning)
+    # Simply pick out the max from the solution array.
+    prefactor = is_positive_detuning ? 1 : -1;
+    return argmax(map(t->prefactor*diffEqSolution(t)[2]/sqrt(t), diffEqSolution.t[2:end]))+1;
+end
+
+# Find the true max vy using the solution to the differential equation.
+function max_vyst_objective(t::Vector, grad::Vector, diffEqSolution, is_positive_detuning)
+    prefactor = is_positive_detuning ? 1 : -1;
+    vy = diffEqSolution(first(t), idxs=2);
+    if length(grad) > 0
+           # use ForwardDiff for the gradient for vy.
+           # using first(t) is supposed to be faster than t[1]
+           vy_dot = ForwardDiff.derivative((t)->diffEqSolution(first(t), idxs=2), first(t));
+           grad[1] = prefactor * (vy_dot/sqrt(first(t)) - 2*vy/sqrt(first(t)^3));
+     end
+     return prefactor * vy / sqrt(first(t));
+end
+
+# Find the maximum vy achieved in the differential equation solutions.
+# This routine does not work when vy is constant (eg. - detuning is 0).
+function get_max_vyst(solution, is_positive_detuning)
+    # Get global maximum by improving upon the crude estimate.
+    crude_argmax = get_crude_estimate_for_vyst(solution, is_positive_detuning);
+    
+    # Method - local maximisation around the crude estimate.
+    opt = NLopt.Opt(:LD_MMA, 1); # Local derivative based MMA approach, only 1 optimisation variable.
+    if solution.t[crude_argmax] - 3e-6 > 0
+        opt.lower_bounds = [solution.t[crude_argmax] - 3e-6]; # lower bound on t
+    else
+        opt.lower_bounds = [0.0];
+    end
+    if solution.t[crude_argmax] + 3e-6 > solution.t[end]
+        opt.upper_bounds = [solution.t[end]];
+    else
+        opt.upper_bounds = [solution.t[crude_argmax] + 3e-6]; # upper bound on t
+    end
+    opt.xtol_rel = 1e-6; # Relative tolerance for t
+    opt.max_objective = (x,g) -> max_vyst_objective(x,g,solution,is_positive_detuning);
+    (max_vyst,argmax_t,ret) = NLopt.optimize(opt, [solution.t[crude_argmax]]); # best initial guess for t
+    
+    return (max_vyst,argmax_t[1]);
+end
+
 function get_crude_estimate_for_max(diffEqSolution, is_positive_detuning)
     # Simply pick out the max from the solution array.
     prefactor = is_positive_detuning ? 1 : -1;
@@ -189,9 +234,12 @@ if trial_run
     param_space["detune_ratio"] = [0.44,-0.2,-0.5]
 else
     param_space["t2"] = [100] # range(10,200,step=10); # remember to convert to microseconds
-    param_space["t1"] = [[x * 100 for x in 0.51:0.1:2]];#[logrange(ceil(x/2),20*x,20) for x in param_space["t2"]]; # remember to convert to microseconds
-    param_space["detune_ratio"] = append!(collect(range(1/10,1/2,length=10)), -1 .* collect(range(1/10,1/2,length=10)),
-            1 ./ collect(range(10,100,length=10)), -1 ./ collect(range(10,100,length=10)))
+    param_space["t1"] = [append!(collect(55:5:100),collect(110:10:200),[51,500,1000])]
+            #[[51,75,100,200,500,1000]]
+            #[[x * 100 for x in 0.51:0.1:2]];#[logrange(ceil(x/2),20*x,20) for x in param_space["t2"]]; # remember to convert to microseconds
+    param_space["detune_ratio"] = append!(collect(0.01:0.01:0.1), collect(-0.01:-0.01:-0.1), collect(0.1:0.05:0.5), collect(-0.1:-0.05:-0.5))# [0.01,0.1]
+            # append!(1 ./ collect(range(10,100,length=10)), -1 ./ collect(range(10,100,length=10)),
+            # collect(range(1/10,1/2,length=10)), -1 .* collect(range(1/10,1/2,length=10)))
 end
 
 sampling = [];
@@ -210,16 +258,19 @@ header = header * ",t2"; # T2
 header = header * ",detune_ratio"; # Detuning freq * T2
 header = header * ",vx"; # Starting state
 header = header * ",ideal_breakdown_t"; # Breakdown time or max simulation time
-header = header * ",estimate_max_vy"; # Max vy estimate - cm
-header = header * ",estimate_max_vy_r"; # Max vy estimate - ramsey
 header = header * ",max_vy"; # Max vy - coherence magnitude
-header = header * ",argmax_t"; # Time for max vy - coherence magnitude
+header = header * ",argmax_t_vy"; # Time for max vy - coherence magnitude
 header = header * ",max_vy_r"; # Max vy - ramsey
-header = header * ",argmax_t_r"; # Time for max vy - ramsey
+header = header * ",argmax_t_vy_r"; # Time for max vy - ramsey
+header = header * ",max_vyst"; # Max vy/sqrt(t) - coherence magnitude
+header = header * ",argmax_t_vyst"; # Time for max vy/sqrt(t) - coherence magnitude
+header = header * ",max_vyst_r"; # Max vy/sqrt(t) - ramsey
+header = header * ",argmax_t_vyst_r"; # Time for max vy/sqrt(t) - ramsey
 header = header * ",vy_end"; # vy end - coherence magnitude
 header = header * ",vy_end_r"; # vy end - ramsey
 header = header * "\n";
 print(header);
+for detune_ratio in param_space["detune_ratio"]
 for (index, t2us) in enumerate(param_space["t2"])
     t2 = t2us * 10^-6;
     for t1us in param_space["t1"][index]
@@ -234,10 +285,10 @@ for (index, t2us) in enumerate(param_space["t2"])
         # 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)),
         # which is the same as 0.5*sqrt(t2:t1)
         stable_endpoint = 0.5*sqrt(t2us/t1us);
-        vx_range = append!(collect(0.04:0.04:(stable_endpoint-0.1)), collect((stable_endpoint-0.1):0.005:(stable_endpoint+0.2)), collect((stable_endpoint+0.2):0.04:0.96));
+        vx_range = [sin(x*pi) for x in 0.01:0.005:0.49];
         vx_minimum = 0.04; #parsed_args["breakdown"] ? 0.5*sqrt(t2us/t1us) : 0.02;
         vx_maximum = 0.96; #parsed_args["breakdown"] ? 0.96 : 0.5*sqrt(t2us/t1us);
-        for detune_ratio in param_space["detune_ratio"]
+        
             detuning_freq = detune_ratio/t2;
             tend = 10*t2;
             # Ramsey interference setup
@@ -251,7 +302,8 @@ for (index, t2us) in enumerate(param_space["t2"])
             problem = ODEProblem(lindblad, [1,0,0], (0.0, tend), simulation_params);
             # For some reason, there's a problem with sampling rate
             ramsey_solution = solve(problem, alg_hints=[:stiff], saveat=sampling, abstol=abstol, reltol=reltol);
-            max_vy_r, argmax_t_r = get_max_vy(ramsey_solution, detuning_freq>0);
+            max_vyst_r, argmax_t_vyst_r = get_max_vyst(ramsey_solution, detuning_freq>0);
+            max_vy_r, argmax_t_vy_r = get_max_vy(ramsey_solution, detuning_freq>0);
             for buff_vx in vx_range
                 vx = buff_vx;
                 vz = sqrt(1-vx^2);
@@ -278,7 +330,8 @@ for (index, t2us) in enumerate(param_space["t2"])
                 problem = ODEProblem(lindblad, v, (0.0, tend), simulation_params);
                 detuned_solution = solve(problem, alg_hints=[:stiff], saveat=sampling, abstol=abstol, reltol=reltol);
                 
-                (max_vy, argmax_t) = get_max_vy(detuned_solution, detuning_freq>0);
+                (max_vyst, argmax_t_vyst) = get_max_vyst(detuned_solution, detuning_freq>0);
+                max_vy, argmax_t_vy = get_max_vy(detuned_solution, detuning_freq>0);
                 
                 # alpha = vx^2*t1/t2-1/4;
                 # predicted = -t1*( 0.5*log((0.25+alpha)/((vz-0.5)^2+alpha)) + 1/(2*sqrt(alpha)) * (atan(-0.5/sqrt(alpha))-atan((vz-0.5)/sqrt(alpha))));
@@ -288,15 +341,19 @@ for (index, t2us) in enumerate(param_space["t2"])
                 output = output * ",$(detune_ratio)"; # Detuning freq * T2
                 output = output * ",$(vx)"; # Starting state
                 output = output * ",$(ideal_solution.t[end])"; # Breakdown time or max simulation time
-                output = output * ",$(detuned_solution.u[get_crude_estimate_for_max(detuned_solution,detuning_freq>0)][2])"; # Max vy (CM) - rough estimate
-                output = output * ",$(ramsey_solution.u[get_crude_estimate_for_max(ramsey_solution,detuning_freq>0)][2])"; # Max vy (Ramsey) - rough estimate
                 output = output * ",$(max_vy)"; # Max vy - coherence magnitude
-                output = output * ",$(argmax_t)"; # Time for max vy
+                output = output * ",$(argmax_t_vy)"; # Time for max vy
                 output = output * ",$(max_vy_r)"; # Max vy - ramsey
-                output = output * ",$(argmax_t_r)"; # Time for max vy - ramsey
+                output = output * ",$(argmax_t_vy_r)"; # Time for max vy - ramsey
+                output = output * ",$(max_vyst)"; # Max vy - coherence magnitude
+                output = output * ",$(argmax_t_vyst)"; # Time for max vy
+                output = output * ",$(max_vyst_r)"; # Max vy - ramsey
+                output = output * ",$(argmax_t_vyst_r)"; # Time for max vy - ramsey
                 output = output * ",$(detuned_solution.u[end][2])"; # End vy (CM)
                 output = output * ",$(ramsey_solution.u[end][2])"; # End vy (Ramsey)
                 print("$(output)\n");
+                # filename = "raw_data/$(t1us),$(t2us),$(detune_ratio),$(vx).bson";
+                # BSON.@save filename detuned_solution;
             end
         end
     end
