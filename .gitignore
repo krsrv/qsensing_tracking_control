@@ -1,6 +1,7 @@
 *.csv
 *.jld2
 *.pdf
-Pictures
-Data
+*.svg
+Pictures/
+Data/
 .DS_Store
