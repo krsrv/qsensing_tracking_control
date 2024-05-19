@@ -2,4 +2,5 @@
 *.jld2
 *.pdf
 Pictures
+Data
 .DS_Store

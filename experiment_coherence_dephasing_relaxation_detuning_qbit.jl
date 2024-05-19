@@ -155,7 +155,6 @@ end
 
 is_ramsey_setup = false;
 simulation_type = ideal_tracking_control::SimulationType;
-v = [0,0,0];
 if !is_ramsey_setup
     x = parsed_args["vx"];#0.5*sqrt(t2/t1);
     v = [x,0,sqrt(1-x^2)];
@@ -165,30 +164,13 @@ else
 end
 tend = 6*t2;
 
-# Return predicted breakdown time for ideal tracking control in units of T2.
-function calculate_breakdown(starting_state, t1us, t2us)
-    vx, vy, vz = starting_state;
-    if vx^2 + vy^2 <= 0.25* t2us/t1us
-        return Inf
-    end
-    alpha = sqrt(4 * t1us * (vx^2+vy^2)  / t2us - 1);
-    tb = (1/alpha * (atan(1/alpha) + atan((2*vz-1)/alpha)) + 0.5 * log( ((2*vz-1)^2+alpha^2)/(1+alpha^2) )) * t1us/t2us;
-    return tb;
-end
-
 function solve_wrapper(starting_state, time_end, simulation_type, past_solution)
     verbose = true;
     if verbose
         print("Starting simulation for: $(simulation_type)\n")
         print("Initial state: $(starting_state)\n");
         print("T1, T2: $(round(t1*1e6))us, $(round(t2*1e6))us\n");
-        if simulation_type == ideal_tracking_control::SimulationType
-            tb = calculate_breakdown(starting_state, t1us, t2us);
-            print("Predicted breakdown: $(tb) T2 units\n");
-        end
-        if simulation_type == detuned_tracking_control::SimulationType || simulation_type == detuned_free_decay::SimulationType
-            print("Detuning frequency: $(round(detuning_freq)) Hz\n");
-        end
+        print("Detuning frequency: $(round(detuning_freq)) Hz\n");
         print("\n");
     end
     abstol, reltol = 1e-8,1e-6;
@@ -208,45 +190,153 @@ plotly();
 linewidth = 3;
 size = (1500,800);
 
-# Technical note:
-# - using xaxis=:scaling_function changes the scale on the plot, but on hover you still see
-#   the original data point value. Also, the change is purely visual so any formula using
-#   x must refer to the original x value. For example, xlims(min, max) should refer to the
-#   min, max in the original x dataset.
-plot(ideal_solution, size=size, linewidth=linewidth, show=true,
-        title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal",
-        xlabel="Time/T2", xlims=(0, 1.05 * ideal_solution.t[end]), xaxis = (x) -> x/t2,
-        label=["vx ideal" "vy ideal" "vz ideal"]);
+# plot(ideal_solution, size=size, linewidth=linewidth, show=true,
+#         title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ideal",
+#         xlabel="Time (s)",
+#         label=["vx ideal" "vy ideal" "vz ideal"]);
 # plot(ideal_solution.t, [target(u) for u in ideal_solution.u], show=true, ylim=(0,1), label="target ideal")
 # plot(ideal_solution.t,
-#   [[get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[1] for u in ideal_solution.u],
-#    [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[2] for u in ideal_solution.u],
-#    [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[3] for u in ideal_solution.u]
-#   ], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
+#     [[get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[1] for u in ideal_solution.u],
+#      [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[2] for u in ideal_solution.u],
+#      [get_hamiltonian(u,(detuned_free_decay::SimulationType,nothing),0)[3] for u in ideal_solution.u]
+#     ], show=true, label=["hx ideal" "hy ideal" "hz ideal"])
 
-graph = plot();
-plot!(graph, detuned_solution, size=size, linewidth=linewidth,
-    title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz",
-    xlabel="Time/T2", xaxis = (x) -> x/t2,
-    label=["vx" "vy" "vz"]);
-vx = parsed_args["vx"];
-display(graph)
+# graph = plot();
+# plot!(graph, detuned_solution, size=size, linewidth=linewidth,
+#     title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, CM, Detuning=$(round(detuning_freq))Hz",
+#     xlabel="Time (s)",
+#     label=["vx" "vy" "vz"]);
+# vx = parsed_args["vx"];
+# if vx^2 > 0.5* t2us/t1us
+#     alpha = sqrt(2 * t1us * (vx ^ 2)  / t2us - 1);
+#     vz = sqrt(1 - vx^2);
+#     tb = t1 * (1/alpha * (atan(1/alpha) + atan((2*vz-1)/alpha)) + 0.5 * log( ((2*vz-1)^2+alpha^2)/(1+alpha^2) ));
+#     detune_ratio = detuning_freq*t2;
+#     breakdown_vy = (1 - exp(-tb / t2)) * detune_ratio * vx;
+#     predicted_vy = sqrt(breakdown_vy^2 + vx^2) * detune_ratio * exp(atan(breakdown_vy/vx)/detune_ratio-1);
+    
+#     plot!(graph, [tb], label="Breakdown", st=:vline);
+#     # plot!(graph, detuned_solution.t, [predicted_vy for x in detuned_solution.t], label="Predicted vy max");
+    
+#     print("Breakdown time - $(tb), Expected max - $(predicted_vy)\n");
+# end
+# display(graph)
 # plot(detuned_solution.t, [target(u) for u in detuned_solution.u], show=true, ylim=(0,1), label="target")
 
-plot(ramsey_solution, size=size, linewidth=linewidth, show=true,
-        title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz",
-        xlabel="Time/T2", xaxis = (x) -> x/t2,
-        label=["vx" "vy" "vz"]);
+# plot(ramsey_solution, size=size, linewidth=linewidth, show=true,
+#         title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Ramsey, Detuning=$(round(detuning_freq))Hz",
+#         xlabel="Time (s)",
+#         label=["vx" "vy" "vz"]);
+
+# detuned_values = [detuned_solution(t)[2]/sqrt(t) for t in detuned_solution.t];
+# ramsey_values = [ramsey_solution(t)[2]/sqrt(t) for t in ramsey_solution.t];
+# plot(detuned_solution.t, detuned_values, label="Detuned", linewidth=linewidth, size=size);
+# plot!(ramsey_solution.t, ramsey_values, label="Ramsey", linewidth=linewidth, size=size, show=true);
+
+using NLopt, ForwardDiff;
+
+function get_crude_estimate_for_max(diffEqSolution, is_positive_detuning)
+    # Simply pick out the max from the solution array.
+    prefactor = is_positive_detuning ? 1 : -1;
+    return argmax(map(u->prefactor*u[2], diffEqSolution.u));
+end
+
+# Find the true max vy using the solution to the differential equation.
+function max_vy_objective(t::Vector, grad::Vector, diffEqSolution, is_positive_detuning)
+    prefactor = is_positive_detuning ? 1 : -1;
+    if length(grad) > 0
+           # use ForwardDiff for the gradient for vy.
+           # using first(t) is supposed to be faster than t[1]
+           grad[1] = prefactor * ForwardDiff.derivative((t)->diffEqSolution(first(t), idxs=2), first(t));
+     end
+     return prefactor * diffEqSolution(first(t), idxs=2)
+end
+
+# Find the maximum vy achieved in the differential equation solutions.
+# This routine does not work when vy is constant (eg. - detuning is 0).
+function get_max_vy(solution, is_positive_detuning)
+    # This is a crude estimate - the solution has interpolations and take maximum values
+    # away from this point.
+    crude_argmax_vy = get_crude_estimate_for_max(solution, is_positive_detuning);
+    
+    # Get global maximum by improving upon the crude estimate.
+    # Method - local maximisation around the crude estimate.
+    opt = NLopt.Opt(:LD_MMA, 1); # Local derivative based MMA approach, only 1 optimisation variable.
+    if solution.t[crude_argmax_vy] - 3e-6 > 0
+        opt.lower_bounds = [solution.t[crude_argmax_vy] - 3e-6]; # lower bound on t
+    else
+        opt.lower_bounds = [0.0];
+    end
+    if solution.t[crude_argmax_vy] + 3e-6 > solution.t[end]
+        opt.upper_bounds = [solution.t[end]];
+    else
+        opt.upper_bounds = [solution.t[crude_argmax_vy] + 3e-6]; # upper bound on t
+    end
+    opt.xtol_rel = 1e-6; # Relative tolerance for t
+    opt.max_objective = (x,g) -> max_vy_objective(x,g,solution,is_positive_detuning);
+    (max_vy,argmax_t,ret) = NLopt.optimize(opt, [solution.t[crude_argmax_vy]]); # best initial guess for t
+    
+    return (max_vy,argmax_t[1]);
+end
+
+function get_crude_estimate_for_vyst(diffEqSolution, is_positive_detuning)
+    # Simply pick out the max from the solution array.
+    prefactor = is_positive_detuning ? 1 : -1;
+    return argmax(map(t->prefactor*diffEqSolution(t)[2]/sqrt(t), diffEqSolution.t[2:end]))+1;
+end
+
+# Find the true max vy using the solution to the differential equation.
+function max_vyst_objective(t::Vector, grad::Vector, diffEqSolution, is_positive_detuning)
+    prefactor = is_positive_detuning ? 1 : -1;
+    vy = diffEqSolution(first(t), idxs=2);
+    if length(grad) > 0
+           # use ForwardDiff for the gradient for vy.
+           # using first(t) is supposed to be faster than t[1]
+           vy_dot = ForwardDiff.derivative((t)->diffEqSolution(first(t), idxs=2), first(t));
+           grad[1] = prefactor * (vy_dot - 0.5*vy/first(t)) / sqrt(first(t));
+     end
+     return prefactor * vy / sqrt(first(t));
+end
+
+# Find the maximum vy achieved in the differential equation solutions.
+# This routine does not work when vy is constant (eg. - detuning is 0).
+function get_max_vyst(solution, is_positive_detuning)
+    # Get global maximum by improving upon the crude estimate.
+    crude_argmax = get_crude_estimate_for_vyst(solution, is_positive_detuning);
+    
+    # Method - local maximisation around the crude estimate.
+    opt = NLopt.Opt(:LD_MMA, 1); # Local derivative based MMA approach, only 1 optimisation variable.
+    if solution.t[crude_argmax] - 5e-6 > 0
+        opt.lower_bounds = [solution.t[crude_argmax] - 5e-6]; # lower bound on t
+    else
+        opt.lower_bounds = [0.0];
+    end
+    if solution.t[crude_argmax] + 5e-6 > solution.t[end]
+        opt.upper_bounds = [solution.t[end]];
+    else
+        opt.upper_bounds = [solution.t[crude_argmax] + 5e-6]; # upper bound on t
+    end
+    opt.xtol_rel = 1e-6; # Relative tolerance for t
+    opt.max_objective = (x,g) -> max_vyst_objective(x,g,solution,is_positive_detuning);
+    (max_vyst,argmax_t,ret) = NLopt.optimize(opt, [solution.t[crude_argmax]]); # best initial guess for t
+    
+    return (max_vyst,argmax_t[1]);
+end
+
+vy_r, tim = get_max_vy(ramsey_solution, true);
+print("Ramsey - Value - $(vy_r), Argmax: $(tim) s. vs T2/2: $(tim * 2 / t2)\n");
+vy, tim = get_max_vy(detuned_solution, true);
+print("Stabilized - Value - $(vy), Argmax: $(tim) s.\n");
+print("Ratio - $(vy/vy_r)\n");
 # print("Ideal solution - area under v_y: ", integral(ideal_solution), "\n")
 # print("Detuned solution - area under v_y: ", integral(detuned_solution), "\n")
 
-## Free decay - like Ramsey but initial state other than (1,0,0)
 # vx, vy = 0.4, 0.5;
 # free_decay_solution = solve_wrapper([vx,vy,0], tend, detuned_free_decay::SimulationType, nothing);
 # predicted_max = atan(detuning_freq * 2 * pi * t2)-atan(vy/vx) > 0 ? sqrt(vx^2+vy^2) * exp(-(atan(detuning_freq * 2 * pi * t2)-atan(vy/vx))/(detuning_freq * 2 * pi * t2)) * sin(atan(detuning_freq * 2 * pi * t2)) : vy;
 # plot(free_decay_solution, size=size, linewidth=linewidth,
 #         title="T1=$(round(t1*1e6))us, T2=$(round(t2*1e6))us, Free Decay, Detuning=$(round(detuning_freq))Hz",
-#         xlabel="Time/T2",
+#         xlabel="Time (s)",
 #         label=["vx" "vy" "vz"]);
 # plot!(free_decay_solution.t, [predicted_max for u in free_decay_solution.u], linewidth=linewidth, show=true,
 #         size=size, label="Predicted max", linestyle=:dash, linecolor=:black,);

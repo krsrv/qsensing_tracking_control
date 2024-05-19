@@ -234,10 +234,11 @@ if trial_run
     param_space["detune_ratio"] = [0.44,-0.2,-0.5]
 else
     param_space["t2"] = [100] # range(10,200,step=10); # remember to convert to microseconds
-    param_space["t1"] = [append!(collect(55:5:100),collect(110:10:200),[51,500,1000])]
+    param_space["t1"] = [append!(collect(50:5:100),collect(110:10:200),[500])]
             #[[51,75,100,200,500,1000]]
             #[[x * 100 for x in 0.51:0.1:2]];#[logrange(ceil(x/2),20*x,20) for x in param_space["t2"]]; # remember to convert to microseconds
-    param_space["detune_ratio"] = append!(collect(0.01:0.01:0.1), collect(-0.01:-0.01:-0.1), collect(0.1:0.05:0.5), collect(-0.1:-0.05:-0.5))# [0.01,0.1]
+    param_space["detune_ratio"] = collect(0.5:-0.01:0); 
+            # append!(collect(0.01:0.01:0.1), collect(-0.01:-0.01:-0.1), collect(0.1:0.05:0.5), collect(-0.1:-0.05:-0.5))# [0.01,0.1]
             # append!(1 ./ collect(range(10,100,length=10)), -1 ./ collect(range(10,100,length=10)),
             # collect(range(1/10,1/2,length=10)), -1 .* collect(range(1/10,1/2,length=10)))
 end
@@ -285,7 +286,7 @@ for (index, t2us) in enumerate(param_space["t2"])
         # 0.5*sqrt(2 * thermal_gamma / (4*dephasing_gamma + thermal_gamma)),
         # which is the same as 0.5*sqrt(t2:t1)
         stable_endpoint = 0.5*sqrt(t2us/t1us);
-        vx_range = [sin(x*pi) for x in 0.01:0.005:0.49];
+        vx_range = [sin(x*pi) for x in 0.005:0.005:0.49];
         vx_minimum = 0.04; #parsed_args["breakdown"] ? 0.5*sqrt(t2us/t1us) : 0.02;
         vx_maximum = 0.96; #parsed_args["breakdown"] ? 0.96 : 0.5*sqrt(t2us/t1us);
         
